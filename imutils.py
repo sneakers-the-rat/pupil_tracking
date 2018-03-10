@@ -26,17 +26,17 @@ def kmeans_img(img, n_clusters, k_criteria):
 
 def draw_circle(event,x,y,flags,param):
     # Draw a circle on the frame to outline the pupil
-    global ix,iy,drawing,rad
+    global ix,iy,drawing,rad,frame_pupil
     if event == cv2.EVENT_LBUTTONDOWN:
         drawing = True
         ix,iy = x,y
     elif event == cv2.EVENT_MOUSEMOVE:
         if drawing == True:
             rad = np.round(euclidean([ix,iy], [x,y])).astype(np.int)
-            cv2.circle(frame_pupil,(ix,iy),rad,(255,255,255),-1)
+            #cv2.circle(frame_pupil,(ix,iy),rad,(255,255,255),-1)
     elif event == cv2.EVENT_LBUTTONUP:
         drawing = False
-        cv2.circle(frame_pupil,(ix,iy),rad,(255,255,255),-1)
+        #cv2.circle(frame_pupil,(ix,iy),rad,(255,255,255),-1)
 
 def preprocess_image(img, roi, sig_cutoff=0.5, sig_gain=1, n_colors=12,
                      k_criteria=(cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 30, 0.2),
@@ -50,7 +50,7 @@ def preprocess_image(img, roi, sig_cutoff=0.5, sig_gain=1, n_colors=12,
     img = exposure.adjust_sigmoid(img, cutoff=sig_cutoff, gain=sig_gain)
 
     # posterize to k colors
-    img = kmeans_img(img, n_colors, k_criteria)
+    #img = kmeans_img(img, n_colors, k_criteria)
 
     # blur
     img = filters.gaussian(img, sigma=gauss_sig)
