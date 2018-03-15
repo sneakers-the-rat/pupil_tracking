@@ -9,7 +9,7 @@ from itertools import count, islice
 
 class Pupil_Model(object):
 
-    def __init__(self, x, y, rad, st_memory=200, lt_ratio = 10, hl = 50):
+    def __init__(self, x, y, rad, st_memory=100, lt_ratio = 10, hl = 50):
         # We initialize with circle params for now because that's all we can trace on the image
         # st_memory = how many sequential frames we keep
         # lt_ratio = how many frames to skip before stashing a long-term estimate
@@ -23,7 +23,7 @@ class Pupil_Model(object):
 
         # we store the initial params to make sanity checks
         x, y, rad = float(x), float(y), float(rad)
-        self.initial_params = (x, y, rad)
+        self.initial_params = (x, y, rad, rad, 0.)
 
         # lists of deque to store the parameter history
         self.st_params = [deque(maxlen=st_memory) for i in range(5)]
@@ -38,61 +38,98 @@ class Pupil_Model(object):
 
         # store the standard deviation used to include/exclude points
         # we initialize to 1/8 of the radius of the circle for no particular reason for the first n frames
-        self.stdev = rad/4.
+        self.stdev = 10
         self.stdevs = []
+        self.mults = []
 
         # Make our ellipse model, set, and stash initial parameters
         self.model = measure.EllipseModel()
         self.model.params = (x, y, rad, rad, 0) # x, y, a, b, theta
 
         # Make a frame-by-frame ellipse model to perform computations to update lt ellipse
-        #self.st_model = measure.EllipseModel()
-        #self.st_model.params = (x, y, rad, rad, 0) # x, y, a, b, theta
+        self.st_model = measure.EllipseModel()
+        self.st_model.params = (x, y, rad, rad, 0) # x, y, a, b, theta
 
         # counter to keep track of frames
         self.frame_counter = count()
         self.n_frames = 0
 
+        self.obl = []
+
         # keep track of the frames where the circle fit failed
         self.failed_frames = []
+
+        self.rmult = []
+        self.point_mult = []
 
 
     def update(self, points, frame):
         # update the model using detected edges from the the most recent frame
         self.n_frames = self.frame_counter.next()
 
+        ret, f_points = self.contour_fit(frame)
+
         # select points within (self.stdev) of the model
-        f_points = self.filter_points(points)
+        f_points = np.concatenate((f_points, self.filter_points(points)))
 
+
+        # get quality metrics, n points, param changes, oblongity
         self.n_points.append(f_points.shape[0])
+        point_mult = np.clip(float(f_points.shape[0])/np.mean(self.n_points), 0, 1)
+        self.point_mult.append(point_mult)
 
-        # if self.check_quality(f_points) > 20:
-        #     self.update_std(f_points)
-        #     self.stash_params(False)
-        #     return
+        # residuals
+        residuals = np.mean(self.model.residuals(f_points)**2)
+        self.resids.append(residuals)
+        if residuals > 0:
+            residual_mult = np.clip(np.mean(self.resids)/residuals, 0,1)
+        else:
+            residual_mult = 0
+
+        self.rmult.append(residual_mult)
+
+        # oblongity
+        ret = self.st_model.estimate(f_points)
+
+        # reform params so maj/minor axis are consistent
+        st_params = self.st_model.params
+
+        if ret:
+            oblongity = np.min(self.st_model.params[2:4])/np.max(self.st_model.params[2:4])
+            oblongity = np.clip(oblongity, 0, 1)
+        else:
+            oblongity = 0
+
+        self.obl.append(oblongity)
+
+        # combine multipliers
+        combo_mult = point_mult * residual_mult * oblongity
+
+        self.mults.append(combo_mult)
+
+        # param changes
+
+        param_diff = [p2-p1 for p1, p2 in zip(self.model.params, self.st_model.params)]
+        #diff_mag = [p/(p**2) if p>1 else 1 for p in param_diff]
+        param_diff = [p*combo_mult*.8 if abs(p)<10 else 0 for p in param_diff ]
+
+        # theta changes really quickly so we esp damp that one
+
+        params = [p1+p2 for p1, p2 in zip(self.model.params, param_diff)]
+        params[4] = self.st_model.params[4]
+
+        # drift back to init if we get lost
+
+        orig_diff = []
+
+        self.model.params = params
+
+        self.pupil_diam.append(np.max(params[2:4]))
 
 
-        # update n_points found to calibrate this frame's weight vs. previous model
+        #self.stash_params(ret)
 
-
-        # augment points with previous points from the model for stability
-        a_points = self.augment_points(f_points)
-
-        # update the model using a weighted combo of past and present points
-        ret = self.model.estimate(a_points)
-        #if ret == False:
-        #    # if we fail to fit at this stage, copy params and move to next frame
-        #    self.stash_params(ret)
-        #    self.update_std(f_points)
-        #    return
-
-        # do an additional fit using active contours to eliminate spurious points
-        ret = self.contour_fit(frame)
-
-        # update the stdev using the new points and # of points
-        self.stash_params(ret)
-
-        self.update_std(f_points)
+        #self.update_std(f_points)
 
         #if self.stdev > 20:
         #    self.backtrack_model()
@@ -166,8 +203,8 @@ class Pupil_Model(object):
         # filter points too far from the model -- who knows what the snakes caught
         filt_pts = self.filter_points(cont_pts)
 
-        ret = self.model.estimate(filt_pts)
-        return ret
+        ret = self.st_model.estimate(filt_pts)
+        return ret, filt_pts
 
 
 
@@ -239,9 +276,12 @@ class Pupil_Model(object):
         self.stdevs.append(self.stdev)
 
 
-    def make_points(self, n_pts, splitxy=False):
+    def make_points(self, n_pts, splitxy=False, st_mod=False):
         thetas = np.linspace(0, np.pi*2, num=n_pts, endpoint=False)
-        points = self.model.predict_xy(thetas)
+        if st_mod:
+            points = self.st_model.predict_xy(thetas)
+        else:
+            points = self.model.predict_xy(thetas)
         if not splitxy:
             return points
         else:
