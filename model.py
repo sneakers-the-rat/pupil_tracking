@@ -24,6 +24,8 @@ class Pupil_Model(object):
         # we store the initial params to make sanity checks
         x, y, rad = float(x), float(y), float(rad)
         self.initial_params = (x, y, rad, rad, 0.)
+        self.initial_model = measure.EllipseModel()
+        self.initial_model.params = self.initial_params
 
         # lists of deque to store the parameter history
         self.st_params = [deque(maxlen=st_memory) for i in range(5)]
@@ -35,6 +37,7 @@ class Pupil_Model(object):
         # store the number of points & residuals we get from edge detection to estimate frame quality
         self.n_points = deque(maxlen=st_memory)
         self.resids   = deque(maxlen=st_memory)
+        self.obl      = deque(maxlen=st_memory)
 
         # store the standard deviation used to include/exclude points
         # we initialize to 1/8 of the radius of the circle for no particular reason for the first n frames
@@ -54,7 +57,7 @@ class Pupil_Model(object):
         self.frame_counter = count()
         self.n_frames = 0
 
-        self.obl = []
+
 
         # keep track of the frames where the circle fit failed
         self.failed_frames = []
@@ -62,43 +65,59 @@ class Pupil_Model(object):
         self.rmult = []
         self.point_mult = []
 
+        self.f_points = None
 
     def update(self, points, frame):
         # update the model using detected edges from the the most recent frame
         self.n_frames = self.frame_counter.next()
 
-        ret, f_points = self.contour_fit(frame)
+        # filter points
+        ret, f_points, mean_resid = self.filter_points(points)
+        if not ret:
+            return
+
+        #save f_points for plotting outside us
+        self.f_points = f_points
+
+        # fit st model
+        ret = self.st_model.estimate(f_points)
+        if not ret:
+            self.failed_frames.append(self.n_frames)
+            return
+
+        # pull out params
+        st_params = self.st_model.params
+        params = self.model.params
+
+
+        #ret, f_points = self.contour_fit(frame)
 
         # select points within (self.stdev) of the model
-        f_points = np.concatenate((f_points, self.filter_points(points)))
+        #f_points = np.concatenate((f_points, self.filter_points(points)))
 
 
         # get quality metrics, n points, param changes, oblongity
         self.n_points.append(f_points.shape[0])
         point_mult = np.clip(float(f_points.shape[0])/np.mean(self.n_points), 0, 1)
-        self.point_mult.append(point_mult)
+        #self.point_mult.append(point_mult)
 
         # residuals
-        residuals = np.mean(self.model.residuals(f_points)**2)
-        self.resids.append(residuals)
-        if residuals > 0:
-            residual_mult = np.clip(np.mean(self.resids)/residuals, 0,1)
+        self.resids.append(mean_resid)
+        if mean_resid > 0: # avoid divide by zero error
+            residual_mult = np.clip(np.mean(self.resids)/mean_resid, 0,1)
         else:
-            residual_mult = 0
+            residual_mult = 0.
 
-        self.rmult.append(residual_mult)
+        #self.rmult.append(residual_mult)
 
         # oblongity
-        ret = self.st_model.estimate(f_points)
+        oblongity = np.min(self.st_model.params[2:4])/np.max(self.st_model.params[2:4])
+        #if oblongity < .8:
+            # don't punish reasonable circles pls
+        #    oblongity = (oblongity-.2
 
-        # reform params so maj/minor axis are consistent
-        st_params = self.st_model.params
+        oblongity = np.clip(oblongity, 0, 1)
 
-        if ret:
-            oblongity = np.min(self.st_model.params[2:4])/np.max(self.st_model.params[2:4])
-            oblongity = np.clip(oblongity, 0, 1)
-        else:
-            oblongity = 0
 
         self.obl.append(oblongity)
 
@@ -108,23 +127,32 @@ class Pupil_Model(object):
         self.mults.append(combo_mult)
 
         # param changes
+        # check if we're orthogonal - if theta is ~pi/2 radians apart we maybe jst got it backwards
+        #st_major = np.argmax(st_params[2:4])
+        #pm_major = np.argmax(params[2:4])
+        #pi_thresh = np.pi/8
 
-        param_diff = [p2-p1 for p1, p2 in zip(self.model.params, self.st_model.params)]
+
+        #if abs(st_params[4]%np.pi-params[4]%np.pi)<pi_thresh and st_major != pm_major:
+        #    st_params[2:4] = np.flip(st_params[2:4], axis=0)
+        #    st_params[4] = params[4]
+
+
+
+        param_diff = [p2-p1 for p1, p2 in zip(params, st_params)]
         #diff_mag = [p/(p**2) if p>1 else 1 for p in param_diff]
-        param_diff = [p*combo_mult*.8 if abs(p)<10 else 0 for p in param_diff ]
+        # different differences get different weights
+        # rapid theta changes are worse when ellipse is oblong, otherwise they can be real quick
 
-        # theta changes really quickly so we esp damp that one
+        diff_mag = [.8, .8, .5, .5, oblongity**2]
+        param_diff_adj = [p*combo_mult*mag for p, mag in zip(param_diff,diff_mag) ]
 
-        params = [p1+p2 for p1, p2 in zip(self.model.params, param_diff)]
-        params[4] = self.st_model.params[4]
 
-        # drift back to init if we get lost
+        new_params = [p1+p2 for p1, p2 in zip(params, param_diff_adj)]
 
-        orig_diff = []
+        self.model.params = new_params
 
-        self.model.params = params
-
-        self.pupil_diam.append(np.max(params[2:4]))
+        self.pupil_diam.append(np.max(new_params[2:4]))
 
 
         #self.stash_params(ret)
@@ -134,10 +162,125 @@ class Pupil_Model(object):
         #if self.stdev > 20:
         #    self.backtrack_model()
 
-
-
-
     def filter_points(self, points):
+        # first remove any distractions
+        edges_xy = self.convert_edges_xy(points)
+        resids = self.model.residuals(edges_xy)
+        edges_xy = edges_xy[resids>np.max(self.model.params[2:4])/2.,:]
+        points[edges_xy[:,1], edges_xy[:,0]] = 0
+
+        labeled_edges = morphology.label(points)
+        uq_edges = np.unique(labeled_edges)[1:]
+
+        # if we only have one, just get on with it
+        if len(uq_edges) != 1:
+            # fit ellipses for all of em
+
+            m_params = self.model.params
+            last_best_ellipse = None
+            last_best_resid = np.inf
+            for e in uq_edges:
+                ellipse_model = measure.EllipseModel()
+                edges_xy = self.convert_edges_xy(labeled_edges, e)
+                ret = ellipse_model.estimate(edges_xy)
+                if not ret:
+                    continue
+
+                # pull out some params
+                major_ax = np.max(ellipse_model.params[2:4])
+                minor_ax = np.min(ellipse_model.params[2:4])
+                im_major = np.max(points.shape)
+                im_minor = np.min(points.shape)
+
+                # check that we're not all weird
+                # shouldn't travel more than 1/8 the image in a single frame...
+                dist = euclidean(ellipse_model.params[0:2], m_params[0:2])
+                if dist>(im_major/5):
+                    continue
+
+                # or be huge or tiny
+                if major_ax>im_major*.75 or major_ax<im_minor/20:
+                    continue
+
+                # or be really oblong
+                if major_ax/minor_ax < .6:
+                    continue
+
+                # calc distance from initial and last
+                mod_resids = np.mean(self.model.residuals(edges_xy)**2)
+                init_resids = np.mean(self.initial_model.residuals(edges_xy)**2)
+                #print(mod_resids)
+                #print(init_resids)
+                mean_resid = np.mean((mod_resids, mod_resids, init_resids))
+
+                if mean_resid < last_best_resid:
+                    last_best_resid = mean_resid
+                    last_best_ellipse = ellipse_model
+
+
+            # keep only points that made good ellipses
+            #labeled_edges = np.isin(labeled_edges, good_ellipses)
+            # catch any points that were unconnected but are in our ellipse
+            if not last_best_ellipse:
+                return False, False, False
+
+            edges_xy = self.convert_edges_xy(points)
+            resids = last_best_ellipse.residuals(edges_xy)
+            major_ax = np.max(last_best_ellipse.params[2:4])
+            edges_xy = edges_xy[resids<(major_ax/10.),:]
+
+        else:
+            edges_xy = self.convert_edges_xy(labeled_edges)
+
+        # now keep only points within certain distance of model
+
+        resids = self.model.residuals(edges_xy)
+
+        # greater than 1sd+mean
+        #resids_std = np.mean(resids)+np.std(resids)
+        # or 1/10 image size
+        #abs_max = np.max(self.model.params[2:4])/5
+        #thresh=abs_max
+
+        #print(resids_std)
+        #print(abs_max)
+        #thresh = np.min((resids_std, abs_max))
+
+        #mask = resids < thresh
+
+        return True, edges_xy, np.mean(resids**2)
+
+
+
+
+
+
+
+
+
+
+
+        #
+
+    #def fit_ellipse(self, edges, which_edge):
+    #    edges_xy = self.convert_edges_xy(edges, which_edge)
+    #    ellipse = measure.EllipseModel()
+
+    def convert_edges_xy(self, edges, which_edge=False):
+        # convert image edges to coords
+        if not which_edge:
+            edges_xy = np.where(edges)
+        else:
+            edges_xy = np.where(edges==which_edge)
+
+        # flip lr because coords are flipped for images
+        return np.column_stack((edges_xy[1], edges_xy[0]))
+
+
+
+
+
+    def filter_points_old(self, points):
         # find only those points that are within a standard deviation of our model
         # with respect to https://stackoverflow.com/questions/37031356/check-if-points-are-inside-ellipse-faster-than-contains-point-method
 

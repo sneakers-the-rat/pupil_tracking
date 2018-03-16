@@ -5,6 +5,7 @@ import cv2
 import numpy as np
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
+from skimage import filters
 
 def crop(im, roi):
     return im[roi[1]:roi[1]+roi[3], roi[0]:roi[0]+roi[2]]
@@ -31,6 +32,15 @@ for i in range(int(nframes)):
     vol[:,:,i] = frame
 
 vol_orig = vol.copy()
+
+frame_filter = frame.copy()
+low = 0.0; high = 1.0
+for i in range(10):
+    frame_filter = filters.rank.enhance_contrast_percentile(frame_filter, morphology.disk(5), p0=low, p1=high)
+    low, high = low+.05, high-.05
+    ax[0].clear()
+    ax[0].imshow(frame_filter)
+    plt.pause(.001)
 
 
 vol = vol_orig.copy()
@@ -174,3 +184,27 @@ def logistic_image(img, logistic):
     img_mult = np.multiply(img.flatten(), preds[:,1])
     img_mult = img_mult.reshape(img.shape)
     return img_mult
+
+
+#############
+sift = cv2.xfeatures2d.SIFT_create()
+kp1, des1 = feature.ORB(frame1,None)
+kp2, des2 = sift.detectAndCompute(frame2,None)
+
+#################
+def ng_structure_tensor(frame):
+    kernel = np.array([[-3,0,3],[-10,0,10],[-3,0,3]],dtype=np.float)/32.
+
+
+Axx, Axy, Ayy = feature.structure_tensor(frame_sig, sigma=100)
+l1, l2 = feature.structure_tensor_eigvals(Axx, Axy, Ayy)
+l1_arr = np.array(l1)
+l2_arr = np.array(l2)
+
+#fig, ax = plt.subplots(3,2)
+ax[0,0].imshow(frame_sig)
+ax[1,0].imshow(l1_arr)
+ax[2,0].imshow(l2_arr)
+ax[0,1].imshow(Axx)
+ax[1,1].imshow(Axy)
+ax[2,1].imshow(Ayy)

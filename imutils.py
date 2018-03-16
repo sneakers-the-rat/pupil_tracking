@@ -64,6 +64,52 @@ def draw_circle(event,x,y,flags,param):
         drawing = False
         #cv2.circle(frame_pupil,(ix,iy),rad,(255,255,255),-1)
 
+def edges2xy(edges):
+    edges_xy = np.where(edges)
+    edges_xy = np.column_stack(edges_xy)
+
+    # flip lr because coords are flipped for images
+    return np.fliplr(edges_xy)
+
+
+def topolar(img, order=5):
+    max_radius = 0.5 * np.linalg.norm(img.shape)
+
+    def transform(coords):
+        theta = 2.0 * np.pi * coords[1] / (img.shape[1] - 1.)
+        radius = max_radius * coords[0] / img.shape[0]
+        i = 0.5 * img.shape[0] - radius * np.sin(theta)
+        j = radius * np.cos(theta) + 0.5 * img.shape[1]
+        return i, j
+
+    polar = geometric_transform(img, transform, order=order, mode='nearest', prefilter=True)
+
+
+    return polar
+
+
+def img2polar(img, center, final_radius, initial_radius = None, phase_width = 3000):
+
+    if initial_radius is None:
+        initial_radius = 0
+
+    theta , R = np.meshgrid(np.linspace(0, 2*np.pi, phase_width),
+                            np.arange(initial_radius, final_radius))
+
+    Xcart, Ycart = polar2cart(R, theta, center)
+
+    Xcart = Xcart.astype(int)
+    Ycart = Ycart.astype(int)
+
+    if img.ndim ==3:
+        polar_img = img[Ycart,Xcart,:]
+        polar_img = np.reshape(polar_img,(final_radius-initial_radius,phase_width,3))
+    else:
+        polar_img = img[Ycart,Xcart]
+        polar_img = np.reshape(polar_img,(final_radius-initial_radius,phase_width))
+
+    return polar_img
+
 def preprocess_image(img, roi, gauss_sig=None, logistic=None, sig_cutoff=None, sig_gain=None):
     img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     img = crop(img, roi)
