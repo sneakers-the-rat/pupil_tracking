@@ -190,7 +190,7 @@ def fit_ellipse(edges, which_edge):
 def nothing(x):
     pass
 
-def structure_eigs(frame, sigma):
+def edge_vectors(frame, sigma):
     """
     Get the eigenvectors/values of the structural tensor
     (1) https://arxiv.org/pdf/1402.5564.pdf
@@ -213,8 +213,8 @@ def structure_eigs(frame, sigma):
     #grad_x = filters.sobel_h(frame)
     #grad_y = filters.sobel_v(frame)
 
-    grad_x = filters.gaussian(cv2.Scharr(frame, ddepth=-1, dx=1, dy=0), sigma=1)
-    grad_y = filters.gaussian(cv2.Scharr(frame, ddepth=-1, dx=0, dy=1), sigma=1)
+    grad_x = filters.gaussian(cv2.Scharr(frame, ddepth=-1, dx=1, dy=0), sigma=sigma)
+    grad_y = filters.gaussian(cv2.Scharr(frame, ddepth=-1, dx=0, dy=1), sigma=sigma)
 
     # Eigenvalues
     Axx = grad_x*grad_x
@@ -229,11 +229,11 @@ def structure_eigs(frame, sigma):
     grads = normalize(grads.reshape(-1,2), norm="l2", axis=1).reshape(grads.shape)
     grad_x, grad_y = grads[:,:,0], grads[:,:,1]
 
-    # get angles
-    angle1 = np.arcsin(grad_y)
-    angle2 = np.arccos(grad_x)
+    # get angles 0-2pi
+    angle = np.arccos(grad_x)
+    angle[grad_y<=0] = np.arccos(-grad_x[grad_y<=0])+np.pi
 
     # edges have eigenvalues with high e2 and low e1, so
     edge_scale = e2-e1
-    #grad_x = grad_x * edge_scale
-    #grad_y = grad_y * edge_scale
+
+    return grad_x, grad_y, angle, edge_scale
