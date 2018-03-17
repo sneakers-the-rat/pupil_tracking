@@ -30,7 +30,7 @@ def draw_circle(event,x,y,flags,param):
 # Initialization
 # TODO: Ask for file, list of files
 
-vid_file = '/home/lab/pupil_vids/human_pupil2.mp4'
+vid_file = '/home/lab/pupil_vids/ira1.mp4'
 vid = cv2.VideoCapture(vid_file)
 ret, frame = vid.read()
 frame_orig = frame.copy()
@@ -131,7 +131,7 @@ vid = cv2.VideoCapture(vid_file)
 pmod = model.Pupil_Model(ix, iy, rad)
 
 cv2.namedWindow('run', flags=cv2.WINDOW_NORMAL)
-#fig, ax = plt.subplots(4,1)
+fig, ax = plt.subplots(4,1)
 while True:
     k = cv2.waitKey(1) & 0xFF
     if k == ord('\r'):
@@ -163,45 +163,45 @@ while True:
 
     # draw points on the images
     frame_orig = imutils.crop(frame_orig, roi)
-    #frame_orig = img_as_float(frame_orig)
+    frame_orig = img_as_float(frame_orig)
 
     # make other images color
-    #frame_params_c = np.repeat(frame_params[:,:,np.newaxis], 3, axis=2)
-    #edges_params_c = np.repeat(edges_params[:,:,np.newaxis], 3, axis=2)
+    frame_params_c = np.repeat(frame_params[:,:,np.newaxis], 3, axis=2)
+    edges_params_c = np.repeat(edges_params[:,:,np.newaxis], 3, axis=2)
 
     # draw circle, have to flip x/y coords again...
     draw.set_color(frame_orig, (model_y, model_x), (0,0,255))
-    #draw.set_color(frame_params_c, (model_y, model_x), (1,0,0))
-    #draw.set_color(edges_params_c, (model_y, model_x), (0, 0, 1))
-    #try:
-    #    draw.set_color(edges_params_c, (pmod.f_points[:,1], pmod.f_points[:,0]), (1,0,0))
-    #except:
-    #    pass
+    draw.set_color(frame_params_c, (model_y, model_x), (1,0,0))
+    draw.set_color(edges_params_c, (model_y, model_x), (0, 0, 1))
+    try:
+        draw.set_color(edges_params_c, (pmod.f_points[:,1], pmod.f_points[:,0]), (1,0,0))
+    except:
+        pass
     draw.set_color(frame_orig, (st_mod_y, st_mod_x), (0,255,0))
 
-    frame_orig = cv2.cvtColor(frame_orig,cv2.COLOR_BGR2RGB)
+    #frame_orig = cv2.cvtColor(frame_orig,cv2.COLOR_BGR2RGB)
 
 
 
-    # ax[0].clear()
-    # ax[1].clear()
-    # ax[2].clear()
-    # ax[3].clear()
-    # if len(pmod.pupil_diam) < 200:
-    #     ax[0].plot(range(len(pmod.pupil_diam)), pmod.pupil_diam)
-    # else:
-    #     ax[0].plot(range(200), pmod.pupil_diam[-200:])
-    # ax[1].plot(range(len(pmod.n_points)), pmod.n_points)
-    # ax[2].plot(range(len(pmod.resids)), pmod.resids)
-    # ax[3].plot(range(len(pmod.obl)), pmod.obl)
-    # plt.pause(0.001)
+    ax[0].clear()
+    ax[1].clear()
+    ax[2].clear()
+    ax[3].clear()
+    if len(pmod.pupil_diam) < 200:
+        ax[0].plot(range(len(pmod.pupil_diam)), pmod.pupil_diam)
+    else:
+        ax[0].plot(range(200), pmod.pupil_diam[-200:])
+    ax[1].plot(range(len(pmod.n_points)), pmod.n_points)
+    ax[2].plot(range(len(pmod.resids)), pmod.resids)
+    ax[3].plot(range(len(pmod.obl)), pmod.obl)
+    plt.pause(0.001)
 
-    writer.writeFrame(frame_orig)
+    #writer.writeFrame(frame_orig)
 
-    #cv2.imshow('run', np.vstack([frame_orig, edges_params_c]))
-    cv2.imshow('run', frame_orig)
+    cv2.imshow('run', np.vstack([frame_orig, edges_params_c]))
+    #cv2.imshow('run', frame_orig)
 
-writer.close()
+#writer.close()
 
 
 

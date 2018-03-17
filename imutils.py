@@ -1,11 +1,15 @@
 import numpy as np
 import cv2
 from scipy.spatial.distance import euclidean
+from scipy.ndimage import sobel
 from skimage import filters, exposure, feature, morphology, measure, img_as_float
 from collections import deque
 from pandas import ewma, ewmstd
 from itertools import count
 from sklearn.linear_model import LogisticRegression
+from sklearn.preprocessing import normalize
+
+# http://cdn.intechopen.com/pdfs/33559/InTech-Methods_for_ellipse_detection_from_edge_maps_of_real_images.pdf
 
 def crop(im, roi):
     return im[roi[1]:roi[1]+roi[3], roi[0]:roi[0]+roi[2]]
@@ -185,3 +189,51 @@ def fit_ellipse(edges, which_edge):
 
 def nothing(x):
     pass
+
+def structure_eigs(frame, sigma):
+    """
+    Get the eigenvectors/values of the structural tensor
+    (1) https://arxiv.org/pdf/1402.5564.pdf
+    (2) https://hal.archives-ouvertes.fr/hal-01037972/document
+
+    The structure tensor A is defined as::
+        A = [Axx Axy]
+            [Axy Ayy]
+
+    Where Axx is the array of squared gradients in the x direction,
+    Axy is gradient in x * y for each pixel after convolution with gaussian kernel.
+
+    We use the Scharr kernel to compute A for greater rotational invariance
+    https://ac.els-cdn.com/S104732030190495X/1-s2.0-S104732030190495X-main.pdf?_tid=61aa5911-ea13-4939-8792-2ff929704990&acdnat=1521241976_f795a9cf5fde71276ea047f6a226de4c
+
+
+    """
+    #frame = np.flipud(frame)
+
+    #grad_x = filters.sobel_h(frame)
+    #grad_y = filters.sobel_v(frame)
+
+    grad_x = filters.gaussian(cv2.Scharr(frame, ddepth=-1, dx=1, dy=0), sigma=1)
+    grad_y = filters.gaussian(cv2.Scharr(frame, ddepth=-1, dx=0, dy=1), sigma=1)
+
+    # Eigenvalues
+    Axx = grad_x*grad_x
+    Axy = grad_x*grad_y
+    Ayy = grad_y*grad_y
+
+    e1 = 0.5 * (Ayy + Axx - np.sqrt((Ayy - Axx) ** 2 + 4 * (Axy ** 2)))
+    e2 = 0.5 * (Ayy + Axx + np.sqrt((Ayy - Axx) ** 2 + 4 * (Axy ** 2)))
+
+    # norm the vectors
+    grads = np.stack((grad_x, grad_y), axis=-1)
+    grads = normalize(grads.reshape(-1,2), norm="l2", axis=1).reshape(grads.shape)
+    grad_x, grad_y = grads[:,:,0], grads[:,:,1]
+
+    # get angles
+    angle1 = np.arcsin(grad_y)
+    angle2 = np.arccos(grad_x)
+
+    # edges have eigenvalues with high e2 and low e1, so
+    edge_scale = e2-e1
+    #grad_x = grad_x * edge_scale
+    #grad_y = grad_y * edge_scale
