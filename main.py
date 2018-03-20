@@ -8,6 +8,7 @@ from itertools import count
 import matplotlib.pyplot as plt
 from scipy import ndimage
 import skvideo.io
+from time import time
 
 import imutils
 import model
@@ -105,10 +106,10 @@ while True:
     canny_high = canny_high/100.
     canny_low  = canny_low/100.
 
-    frame_params = imutils.preprocess_image(frame_orig, roi,
+    frame = imutils.preprocess_image(frame_orig, roi,
                                             sig_cutoff=sig_cutoff,
                                             sig_gain=sig_gain)
-    edges_params = feature.canny(frame_params, sigma=canny_sig,
+    edges_params = feature.canny(frame, sigma=canny_sig,
                                  high_threshold=canny_high, low_threshold=canny_low)
 
     frame_orig = cv2.cvtColor(frame_orig, cv2.COLOR_BGR2GRAY)
@@ -116,22 +117,29 @@ while True:
     frame_orig = img_as_float(frame_orig)
 
 
-    cv2.imshow('params', np.vstack([frame_orig, frame_params, edges_params]))
+    cv2.imshow('params', np.vstack([frame_orig, frame, edges_params]))
 cv2.destroyAllWindows()
 
 # run once we get good params
 #fourcc = cv2.VideoWriter_fourcc(*'X264')
 #writer = cv2.VideoWriter('/home/lab/pupil_vids/tracking_human.mkv', fourcc, 30., frame_params.shape, True)
 
-writer = skvideo.io.FFmpegWriter('/home/lab/pupil_vids/tracking_human2.mp4')
+#writer = skvideo.io.FFmpegWriter('/home/lab/pupil_vids/tracking_human2.mp4')
 
 
 # remake video object to restart from frame 0
 vid = cv2.VideoCapture(vid_file)
-pmod = model.Pupil_Model(ix, iy, rad)
+total_frames = vid.get(cv2.CAP_PROP_FRAME_COUNT)
+#pmod = model.Pupil_Model(ix, iy, rad)
 
 cv2.namedWindow('run', flags=cv2.WINDOW_NORMAL)
-fig, ax = plt.subplots(4,1)
+#fig, ax = plt.subplots(4,1)
+thetas = np.linspace(0, np.pi*2, num=100, endpoint=False)
+frame_counter = count()
+
+frame_params = np.ndarray(shape=(0, 6))
+
+starttime = time()
 while True:
     k = cv2.waitKey(1) & 0xFF
     if k == ord('\r'):
@@ -141,24 +149,60 @@ while True:
     if ret == False:
         break
 
-    frame_params = imutils.preprocess_image(frame_orig, roi,
+    n_frame = frame_counter.next()
+    if n_frame % 1000 == 0:
+        now = time()
+        fps = n_frame/(now-starttime)
+        print('frame {} of {}, {} fps'.format(n_frame, total_frames, fps))
+
+
+    frame = imutils.preprocess_image(frame_orig, roi,
                                             sig_cutoff=sig_cutoff,
                                             sig_gain=sig_gain)
 
     # canny edge detection & reshaping coords
-    edges_params = feature.canny(frame_params, sigma=canny_sig,
+    edges_params = feature.canny(frame, sigma=canny_sig,
                                  high_threshold=canny_high, low_threshold=canny_low)
 
-    # update our model and get some points to plot
-    pmod.update(edges_params, frame_params)
-    #print(pmod.stdev, pmod.n_points[-1], pmod.qp)
-    (model_x, model_y) = pmod.make_points(200, splitxy=True)
-    model_x, model_y = model_x.astype(np.int), model_y.astype(np.int)
-    model_x, model_y = np.concatenate((model_x, model_x+1, model_x-1)), np.concatenate((model_y, model_y+1, model_y-1))
+    labeled_edges = morphology.label(edges_params)
+    uq_edges = np.unique(labeled_edges)
+    uq_edges = uq_edges[uq_edges>0]
+    ellipses = [imutils.fit_ellipse(labeled_edges, e) for e in uq_edges]
+    ell_pts = np.ndarray(shape=(0,2))
+    for e in ellipses:
+        try:
+            points = e.predict_xy(thetas)
+        except:
+            continue
+        if any(points.flatten()<0) or any(points[:,0]>labeled_edges.shape[1])\
+            or any(points[:,1]>labeled_edges.shape[0]):
+            # outside the image, skip
+            continue
 
-    (st_mod_x, st_mod_y) = pmod.make_points(200, splitxy=True, st_mod=True)
-    st_mod_x, st_mod_y = st_mod_x.astype(np.int), st_mod_y.astype(np.int)
-    st_mod_x, st_mod_y = np.concatenate((st_mod_x, st_mod_x+1, st_mod_x-1)), np.concatenate((st_mod_y, st_mod_y+1, st_mod_y-1))
+        ell_pts = np.concatenate((ell_pts, points), axis=0)
+        ell_params = e.params
+        ell_params.append(n_frame)
+        frame_params = np.vstack((frame_params, ell_params))
+
+
+
+    ell_pts = ell_pts.astype(np.int)
+
+
+
+
+
+
+    # update our model and get some points to plot
+    #pmod.update(edges_params, frame_params)
+    #print(pmod.stdev, pmod.n_points[-1], pmod.qp)
+    #(model_x, model_y) = pmod.make_points(200, splitxy=True)
+    #model_x, model_y = model_x.astype(np.int), model_y.astype(np.int)
+    #model_x, model_y = np.concatenate((model_x, model_x+1, model_x-1)), np.concatenate((model_y, model_y+1, model_y-1))
+
+    #(st_mod_x, st_mod_y) = pmod.make_points(200, splitxy=True, st_mod=True)
+    #st_mod_x, st_mod_y = st_mod_x.astype(np.int), st_mod_y.astype(np.int)
+    #st_mod_x, st_mod_y = np.concatenate((st_mod_x, st_mod_x+1, st_mod_x-1)), np.concatenate((st_mod_y, st_mod_y+1, st_mod_y-1))
 
 
     # draw points on the images
@@ -166,35 +210,35 @@ while True:
     frame_orig = img_as_float(frame_orig)
 
     # make other images color
-    frame_params_c = np.repeat(frame_params[:,:,np.newaxis], 3, axis=2)
+    #frame_params_c = np.repeat(frame_params[:,:,np.newaxis], 3, axis=2)
     edges_params_c = np.repeat(edges_params[:,:,np.newaxis], 3, axis=2)
 
     # draw circle, have to flip x/y coords again...
-    draw.set_color(frame_orig, (model_y, model_x), (0,0,255))
-    draw.set_color(frame_params_c, (model_y, model_x), (1,0,0))
-    draw.set_color(edges_params_c, (model_y, model_x), (0, 0, 1))
-    try:
-        draw.set_color(edges_params_c, (pmod.f_points[:,1], pmod.f_points[:,0]), (1,0,0))
-    except:
-        pass
-    draw.set_color(frame_orig, (st_mod_y, st_mod_x), (0,255,0))
+    draw.set_color(frame_orig, (ell_pts[:,1], ell_pts[:,0]), (0,0,255))
+    #draw.set_color(frame_params_c, (model_y, model_x), (1,0,0))
+    draw.set_color(edges_params_c, (ell_pts[:,1], ell_pts[:,0]), (0, 0, 1))
+    #try:
+    #    draw.set_color(edges_params_c, (pmod.f_points[:,1], pmod.f_points[:,0]), (1,0,0))
+    #except:
+    #    pass
+    #draw.set_color(frame_orig, (st_mod_y, st_mod_x), (0,255,0))
 
     #frame_orig = cv2.cvtColor(frame_orig,cv2.COLOR_BGR2RGB)
 
 
 
-    ax[0].clear()
-    ax[1].clear()
-    ax[2].clear()
-    ax[3].clear()
-    if len(pmod.pupil_diam) < 200:
-        ax[0].plot(range(len(pmod.pupil_diam)), pmod.pupil_diam)
-    else:
-        ax[0].plot(range(200), pmod.pupil_diam[-200:])
-    ax[1].plot(range(len(pmod.n_points)), pmod.n_points)
-    ax[2].plot(range(len(pmod.resids)), pmod.resids)
-    ax[3].plot(range(len(pmod.obl)), pmod.obl)
-    plt.pause(0.001)
+    # ax[0].clear()
+    # ax[1].clear()
+    # ax[2].clear()
+    # ax[3].clear()
+    # if len(pmod.pupil_diam) < 200:
+    #     ax[0].plot(range(len(pmod.pupil_diam)), pmod.pupil_diam)
+    # else:
+    #     ax[0].plot(range(200), pmod.pupil_diam[-200:])
+    # ax[1].plot(range(len(pmod.n_points)), pmod.n_points)
+    # ax[2].plot(range(len(pmod.resids)), pmod.resids)
+    # ax[3].plot(range(len(pmod.obl)), pmod.obl)
+    # plt.pause(0.001)
 
     #writer.writeFrame(frame_orig)
 

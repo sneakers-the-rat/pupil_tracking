@@ -6,6 +6,9 @@ import numpy as np
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 from skimage import filters
+from time import time
+
+import imutils
 
 def crop(im, roi):
     return im[roi[1]:roi[1]+roi[3], roi[0]:roi[0]+roi[2]]
@@ -208,3 +211,22 @@ ax[2,0].imshow(l2_arr)
 ax[0,1].imshow(Axx)
 ax[1,1].imshow(Axy)
 ax[2,1].imshow(Ayy)
+
+#### Filtering ellipses
+frame_params_bak = frame_params.copy()
+
+# given frame-params...
+frame_params = frame_params.astype(np.int)
+
+# remove extremes
+
+z = np.where((frame_params[:,0]-ix)**2+(frame_params[:,1]-iy)**2 < rad**2)
+z = z[0]
+frame_params_red = frame_params[z,:]
+
+fig, ax = plt.subplots(5,1)
+for i in range(5):
+    ax[i].scatter(frame_params_red[:,5], frame_params_red[:,i], s=1)
+
+
+np.isin(frame_params[:,0:2], pmask_xy)

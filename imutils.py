@@ -184,8 +184,9 @@ def fit_ellipse(edges, which_edge):
     edge_points = np.where(edges == which_edge)
     edge_points = np.column_stack((edge_points[1], edge_points[0]))
     ellipse = measure.EllipseModel()
-    ellipse.estimate(edge_points)
-    return ellipse
+    ret = ellipse.estimate(edge_points)
+    if ret == True:
+        return ellipse
 
 def nothing(x):
     pass
