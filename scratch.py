@@ -7,6 +7,7 @@ import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 from skimage import filters
 from time import time
+from skvideo import io
 
 import imutils
 
@@ -213,20 +214,199 @@ ax[1,1].imshow(Axy)
 ax[2,1].imshow(Ayy)
 
 #### Filtering ellipses
+import pandas as pd
+
+# from a list...
+frame_params = pd.DataFrame({'x':x_list, 'y':y_list,
+                             'a':a_list, 'b':b_list,
+                             't':t_list, 'v':v_list,
+                             'n':n_list})
+frame_params = frame_params.astype({'n':np.int})
+
+
+
 frame_params_bak = frame_params.copy()
 
-# given frame-params...
-frame_params = frame_params.astype(np.int)
+#frame_params = frame_params_bak.copy()
+#frame_params = pd.DataFrame(frame_params_bak, columns=['x','y','a','b','t','n'])
 
-# remove extremes
+# given frame-params..
 
-z = np.where((frame_params[:,0]-ix)**2+(frame_params[:,1]-iy)**2 < rad**2)
+#frame_params = frame_params.astype({'x':np.int, 'y':np.int,
+#                                    'a':np.int, 'b':np.int,
+#                                    't':np.float,'n':np.int})
+
+# redo coordinates so a is always larger than b, thetas are consistent
+revs = frame_params['b'] > frame_params['a']
+as_temp = frame_params.loc[revs,'a']
+bs_temp = frame_params.loc[revs,'b']
+frame_params.loc[revs,'a'] = bs_temp
+frame_params.loc[revs,'b'] = as_temp
+ts_temp = frame_params.loc[revs,'t']
+ts_temp = (ts_temp + np.pi/2) % np.pi
+frame_params.loc[revs,'t'] = ts_temp
+
+# now make all thetas between 0 and pi
+frame_params['t'] = (frame_params['t']+np.pi) % np.pi
+
+# remove extreme x/y positions
+
+z = np.where((frame_params['x']-ix)**2+(frame_params['y']-iy)**2 < rad**2)
 z = z[0]
-frame_params_red = frame_params[z,:]
+frame_params = frame_params.loc[z,:]
 
-fig, ax = plt.subplots(5,1)
-for i in range(5):
-    ax[i].scatter(frame_params_red[:,5], frame_params_red[:,i], s=1)
+# remove extremely oblong ones
+frame_params['e'] = frame_params['b']/frame_params['a']
+frame_params = frame_params[frame_params.e>0.5]
+
+# set n as index
+#frame_params = frame_params.set_index('n')
+
+# threshold based on mean value
+thresh = filters.threshold_otsu(frame_params['v'])
+frame_params = frame_params[frame_params.v > thresh]
+
+#
+
+fig, ax = plt.subplots(7,1)
+for i, x in enumerate(['x','y','a','b','t', 'v', 'e']):
+    ax[i].scatter(frame_params['n'], frame_params[x], s=0.5, alpha=0.2, c='k')
+
+from sklearn.decomposition import FastICA
+from scipy import signal
+
+# Generate sample data
+ica = FastICA()
+S_ = ica.fit_transform(frame_params.loc[:,('x','y')])
+
+fig, ax = plt.subplots(S_.shape[1],1)
+for i in range(S_.shape[1]):
+    ax[i].scatter(range(S_.shape[0]),S_[:,i], s=0.5)
+
+# trace through and segregate
+frame_params_ind = frame_params.set_index('n')
 
 
-np.isin(frame_params[:,0:2], pmask_xy)
+############# trying clustering
+from sklearn import cluster
+from sklearn.model_selection import GridSearchCV
+from sklearn.neighbors import LocalOutlierFactor
+from sklearn.linear_model import RANSACRegressor
+from sklearn.preprocessing import RobustScaler
+from sklearn.svm import SVR
+
+scaler = RobustScaler()
+params_scaled = scaler.fit_transform(frame_params.loc[:,('a','b','x','y','v','e')])
+params_scaled = np.column_stack((params_scaled, frame_params['n']))
+params_scaled = pd.DataFrame(params_scaled, columns=['a','b','x','y','v','e','n'])
+
+of = LocalOutlierFactor(n_jobs=7)
+inliers = of.fit_predict(frame_params.loc[:,('x','y','e','v','n')])
+
+
+#svr = SVR(verbose=True)
+#svr.fit(frame_params['n'].reshape(-1,1), frame_params['a'])
+#regress = RANSACRegressor()
+#regress.fit(frame_params.loc[:,('n')].reshape(-1,1), frame_params['a'])
+
+#grid_params = {'n_clusters':[2,3,4,5]}
+
+#km= cluster.KMeans(n_jobs=7, copy_x=True)
+#grids = GridSearchCV(km, param_grid=grid_params)
+#grids.fit(frame_params.loc[:,('x','y','v','e')])
+
+#grid_results = pd.DataFrame(grids.cv_results_)
+
+#km = cluster.KMeans(n_jobs=7, n_clusters=3)
+#clusts = km.fit_predict(frame_params.loc[:,('x','y','v','e')])
+
+
+
+
+fig, ax = plt.subplots(7,1)
+for i, x in enumerate(['x','y','a','b','t', 'v', 'e']):
+    ax[i].scatter(frame_params['n'], frame_params[x], s=0.5, alpha=0.2, c=inliers)
+
+params_filtered = frame_params[inliers==1]
+
+fig, ax = plt.subplots(7,1)
+for i, x in enumerate(['x','y','a','b','t', 'v', 'e']):
+    ax[i].scatter(params_filtered['n'], params_filtered[x], s=0.5, alpha=0.2, c='k')
+
+#params_filtered = params_filtered.set_index('n')
+params_mean = params_filtered.groupby('n').mean()
+#params_mean
+
+fig, ax = plt.subplots(7,1)
+for i, x in enumerate(['x','y','a','b','t', 'v', 'e']):
+    ax[i].scatter(params_mean['n'], params_mean[x], s=0.5, alpha=0.2, c='k')
+
+index = params_mean.index
+index = np.linspace(0, frame_params['n'].max(), frame_params['n'].max()+1, dtype=np.int)
+params_mean.reindex(index)
+params_mean.interpolate('cubic')
+
+fig, ax = plt.subplots(7,1)
+for i, x in enumerate(['x','y','a','b','t', 'v', 'e']):
+    ax[i].scatter(params_mean[x], s=0.5, alpha=0.2, c='k')
+
+##########################
+vid = cv2.VideoCapture(vid_file)
+cv2.namedWindow('run', flags=cv2.WINDOW_NORMAL)
+#fig, ax = plt.subplots(4,1)
+thetas = np.linspace(0, np.pi*2, num=100, endpoint=False)
+frame_counter = count()
+emod = measure.EllipseModel()
+
+fn = '/home/lab/pupil_vids/nick1_track_smooth2.mp4'
+#fourcc = cv2.VideoWriter_fourcc(*"X264")
+writer = io.FFmpegWriter(fn)
+
+
+while True:
+    k = cv2.waitKey(1) & 0xFF
+    if k == ord('\r'):
+        break
+
+    ret, frame_orig = vid.read()
+    if ret == False:
+        break
+    frame_orig = cv2.cvtColor(frame_orig, cv2.COLOR_BGR2RGB)
+
+
+    n_frame = frame_counter.next()
+
+    try:
+        aframe_params = params_smooth.loc[n_frame,['x','y','a','b','t']]
+    except:
+        frame_orig = imutils.crop(frame_orig, roi)
+        frame_orig = img_as_float(frame_orig)
+        cv2.imshow('run', frame_orig)
+        frame_orig = frame_orig * 255
+        writer.writeFrame(frame_orig)
+        continue
+
+
+    points = emod.predict_xy(thetas, params=aframe_params)
+    points_up = points+1
+    points_down = points-1
+    points = np.concatenate((points, points_up, points_down), axis=0)
+
+    points = points.astype(np.int)
+
+
+    frame_orig = imutils.crop(frame_orig, roi)
+    frame_orig = img_as_float(frame_orig)
+
+    draw.set_color(frame_orig, (points[:, 1], points[:, 0]), (1, 0, 0))
+    cv2.imshow('run', frame_orig)
+
+    frame_orig = frame_orig*255
+    #frame_orig = frame_orig.astype(np.uint8)
+
+    writer.writeFrame(frame_orig)
+
+
+
+writer.close()
+cv2.destroyAllWindows()

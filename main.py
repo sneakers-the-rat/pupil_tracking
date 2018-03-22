@@ -1,13 +1,8 @@
 import numpy as np
 import cv2
 from scipy.spatial.distance import euclidean
-from skimage import filters, exposure, feature, morphology, measure, img_as_float, draw
-from collections import deque
-from pandas import ewma, ewmstd
+from skimage import feature, morphology, img_as_float, draw
 from itertools import count
-import matplotlib.pyplot as plt
-from scipy import ndimage
-import skvideo.io
 from time import time
 
 import imutils
@@ -31,7 +26,7 @@ def draw_circle(event,x,y,flags,param):
 # Initialization
 # TODO: Ask for file, list of files
 
-vid_file = '/home/lab/pupil_vids/ira1.mp4'
+vid_file = '/home/lab/pupil_vids/nick3.avi'
 vid = cv2.VideoCapture(vid_file)
 ret, frame = vid.read()
 frame_orig = frame.copy()
@@ -64,17 +59,10 @@ cv2.destroyAllWindows()
 # Adjust preprocessing parameters
 ## Initial values -- have to use ints, we'll convert back later
 frame_params = imutils.preprocess_image(frame_orig, roi)
-pmask        = imutils.circle_mask(frame_params, ix, iy, rad)
-#logistic     = imutils.infer_sigmoid(frame_params, pmask)
-#frame_params = imutils.preprocess_image(frame_orig, roi, logistic=
-#logistic)
 edges_params = feature.canny(frame_params, sigma=3)
 
 sig_cutoff = 50
 sig_gain = 5
-n_colors = 12
-k_criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 30, 0.2)
-gauss_sig = 200
 canny_sig  = 200
 canny_high = 50
 canny_low  = 10
@@ -82,7 +70,6 @@ canny_low  = 10
 cv2.namedWindow('params', flags=cv2.WINDOW_NORMAL)
 cv2.createTrackbar('Sigmoid Cutoff', 'params', sig_cutoff, 100, imutils.nothing)
 cv2.createTrackbar('Sigmoid Gain', 'params', sig_gain, 20, imutils.nothing)
-#cv2.createTrackbar('n Colors', 'params', n_colors, 16, imutils.nothing)
 cv2.createTrackbar('Gaussian Blur', 'params', canny_sig, 700, imutils.nothing)
 cv2.createTrackbar('Canny High Threshold', 'params', canny_high, 100, imutils.nothing)
 cv2.createTrackbar('Canny Low Threshold', 'params', canny_low, 100, imutils.nothing)
@@ -96,7 +83,6 @@ while True:
 
     sig_cutoff = cv2.getTrackbarPos('Sigmoid Cutoff', 'params')
     sig_gain = cv2.getTrackbarPos('Sigmoid Gain', 'params')
-    #n_colors = cv2.getTrackbarPos('n Colors', 'params')
     canny_sig = cv2.getTrackbarPos('Gaussian Blur', 'params')
     canny_high = cv2.getTrackbarPos('Canny High Threshold', 'params')
     canny_low = cv2.getTrackbarPos('Canny Low Threshold', 'params')
@@ -121,12 +107,6 @@ while True:
 cv2.destroyAllWindows()
 
 # run once we get good params
-#fourcc = cv2.VideoWriter_fourcc(*'X264')
-#writer = cv2.VideoWriter('/home/lab/pupil_vids/tracking_human.mkv', fourcc, 30., frame_params.shape, True)
-
-#writer = skvideo.io.FFmpegWriter('/home/lab/pupil_vids/tracking_human2.mp4')
-
-
 # remake video object to restart from frame 0
 vid = cv2.VideoCapture(vid_file)
 total_frames = vid.get(cv2.CAP_PROP_FRAME_COUNT)
@@ -137,7 +117,14 @@ cv2.namedWindow('run', flags=cv2.WINDOW_NORMAL)
 thetas = np.linspace(0, np.pi*2, num=100, endpoint=False)
 frame_counter = count()
 
-frame_params = np.ndarray(shape=(0, 6))
+#frame_params = np.ndarray(shape=(0, 7))
+x_list = []
+y_list = []
+a_list = []
+b_list = []
+t_list = []
+n_list = []
+v_list = []
 
 starttime = time()
 while True:
@@ -150,7 +137,7 @@ while True:
         break
 
     n_frame = frame_counter.next()
-    if n_frame % 1000 == 0:
+    if n_frame % 500 == 0:
         now = time()
         fps = n_frame/(now-starttime)
         print('frame {} of {}, {} fps'.format(n_frame, total_frames, fps))
@@ -170,6 +157,8 @@ while True:
     ellipses = [imutils.fit_ellipse(labeled_edges, e) for e in uq_edges]
     ell_pts = np.ndarray(shape=(0,2))
     for e in ellipses:
+        if not e:
+            continue
         try:
             points = e.predict_xy(thetas)
         except:
@@ -181,71 +170,32 @@ while True:
 
         ell_pts = np.concatenate((ell_pts, points), axis=0)
         ell_params = e.params
-        ell_params.append(n_frame)
-        frame_params = np.vstack((frame_params, ell_params))
+        x_list.append(e.params[0])
+        y_list.append(e.params[1])
+        a_list.append(e.params[2])
+        b_list.append(e.params[3])
+        t_list.append(e.params[4])
+        n_list.append(n_frame)
+        # get mean darkness
+        ell_mask_y, ell_mask_x = draw.ellipse(ell_params[0], ell_params[1], ell_params[2], ell_params[3],
+                                shape=(labeled_edges.shape[1], labeled_edges.shape[0]), rotation=ell_params[4])
 
-
-
-    ell_pts = ell_pts.astype(np.int)
-
-
-
-
-
-
-    # update our model and get some points to plot
-    #pmod.update(edges_params, frame_params)
-    #print(pmod.stdev, pmod.n_points[-1], pmod.qp)
-    #(model_x, model_y) = pmod.make_points(200, splitxy=True)
-    #model_x, model_y = model_x.astype(np.int), model_y.astype(np.int)
-    #model_x, model_y = np.concatenate((model_x, model_x+1, model_x-1)), np.concatenate((model_y, model_y+1, model_y-1))
-
-    #(st_mod_x, st_mod_y) = pmod.make_points(200, splitxy=True, st_mod=True)
-    #st_mod_x, st_mod_y = st_mod_x.astype(np.int), st_mod_y.astype(np.int)
-    #st_mod_x, st_mod_y = np.concatenate((st_mod_x, st_mod_x+1, st_mod_x-1)), np.concatenate((st_mod_y, st_mod_y+1, st_mod_y-1))
-
+        v_list.append(np.mean(frame[ell_mask_x, ell_mask_y]))
 
     # draw points on the images
+    ell_pts = ell_pts.astype(np.int)
     frame_orig = imutils.crop(frame_orig, roi)
     frame_orig = img_as_float(frame_orig)
 
     # make other images color
-    #frame_params_c = np.repeat(frame_params[:,:,np.newaxis], 3, axis=2)
     edges_params_c = np.repeat(edges_params[:,:,np.newaxis], 3, axis=2)
 
     # draw circle, have to flip x/y coords again...
     draw.set_color(frame_orig, (ell_pts[:,1], ell_pts[:,0]), (0,0,255))
-    #draw.set_color(frame_params_c, (model_y, model_x), (1,0,0))
     draw.set_color(edges_params_c, (ell_pts[:,1], ell_pts[:,0]), (0, 0, 1))
-    #try:
-    #    draw.set_color(edges_params_c, (pmod.f_points[:,1], pmod.f_points[:,0]), (1,0,0))
-    #except:
-    #    pass
-    #draw.set_color(frame_orig, (st_mod_y, st_mod_x), (0,255,0))
-
-    #frame_orig = cv2.cvtColor(frame_orig,cv2.COLOR_BGR2RGB)
-
-
-
-    # ax[0].clear()
-    # ax[1].clear()
-    # ax[2].clear()
-    # ax[3].clear()
-    # if len(pmod.pupil_diam) < 200:
-    #     ax[0].plot(range(len(pmod.pupil_diam)), pmod.pupil_diam)
-    # else:
-    #     ax[0].plot(range(200), pmod.pupil_diam[-200:])
-    # ax[1].plot(range(len(pmod.n_points)), pmod.n_points)
-    # ax[2].plot(range(len(pmod.resids)), pmod.resids)
-    # ax[3].plot(range(len(pmod.obl)), pmod.obl)
-    # plt.pause(0.001)
-
-    #writer.writeFrame(frame_orig)
 
     cv2.imshow('run', np.vstack([frame_orig, edges_params_c]))
-    #cv2.imshow('run', frame_orig)
 
-#writer.close()
 
 
 

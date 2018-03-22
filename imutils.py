@@ -1,13 +1,17 @@
 import numpy as np
 import cv2
 from scipy.spatial.distance import euclidean
-from scipy.ndimage import sobel
+from scipy.spatial import distance
 from skimage import filters, exposure, feature, morphology, measure, img_as_float
-from collections import deque
+from collections import deque as dq
 from pandas import ewma, ewmstd
 from itertools import count
 from sklearn.linear_model import LogisticRegression
 from sklearn.preprocessing import normalize
+import scipy.ndimage as ndi
+from scipy.ndimage import (gaussian_filter,
+                           generate_binary_structure, binary_erosion, label)
+
 
 # http://cdn.intechopen.com/pdfs/33559/InTech-Methods_for_ellipse_detection_from_edge_maps_of_real_images.pdf
 
@@ -76,43 +80,7 @@ def edges2xy(edges):
     return np.fliplr(edges_xy)
 
 
-def topolar(img, order=5):
-    max_radius = 0.5 * np.linalg.norm(img.shape)
 
-    def transform(coords):
-        theta = 2.0 * np.pi * coords[1] / (img.shape[1] - 1.)
-        radius = max_radius * coords[0] / img.shape[0]
-        i = 0.5 * img.shape[0] - radius * np.sin(theta)
-        j = radius * np.cos(theta) + 0.5 * img.shape[1]
-        return i, j
-
-    polar = geometric_transform(img, transform, order=order, mode='nearest', prefilter=True)
-
-
-    return polar
-
-
-def img2polar(img, center, final_radius, initial_radius = None, phase_width = 3000):
-
-    if initial_radius is None:
-        initial_radius = 0
-
-    theta , R = np.meshgrid(np.linspace(0, 2*np.pi, phase_width),
-                            np.arange(initial_radius, final_radius))
-
-    Xcart, Ycart = polar2cart(R, theta, center)
-
-    Xcart = Xcart.astype(int)
-    Ycart = Ycart.astype(int)
-
-    if img.ndim ==3:
-        polar_img = img[Ycart,Xcart,:]
-        polar_img = np.reshape(polar_img,(final_radius-initial_radius,phase_width,3))
-    else:
-        polar_img = img[Ycart,Xcart]
-        polar_img = np.reshape(polar_img,(final_radius-initial_radius,phase_width))
-
-    return polar_img
 
 def preprocess_image(img, roi, gauss_sig=None, logistic=None, sig_cutoff=None, sig_gain=None):
     img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
@@ -186,6 +154,8 @@ def fit_ellipse(edges, which_edge):
     ellipse = measure.EllipseModel()
     ret = ellipse.estimate(edge_points)
     if ret == True:
+        #resid = np.mean(ellipse.residuals(edge_points)**2)
+        #return ellipse, resid
         return ellipse
 
 def nothing(x):
@@ -238,3 +208,211 @@ def edge_vectors(frame, sigma):
     edge_scale = e2-e1
 
     return grad_x, grad_y, angle, edge_scale
+
+def scharr_canny(image, sigma, low_threshold, high_threshold):
+    # skimage's canny but we get scharr grads instead of sobel,
+    # and use the eigenvalues of the structure tensor rather than the hypotenuse
+
+    isobel = filters.gaussian(cv2.Scharr(image, ddepth=-1, dx=0, dy=1), sigma=sigma)
+    jsobel = filters.gaussian(cv2.Scharr(image, ddepth=-1, dx=1, dy=0), sigma=sigma)
+    abs_isobel = np.abs(isobel)
+    abs_jsobel = np.abs(jsobel)
+
+    Axx = jsobel*jsobel
+    Axy = jsobel*isobel
+    Ayy = isobel*isobel
+
+    e1 = 0.5 * (Ayy + Axx - np.sqrt((Ayy - Axx) ** 2 + 4 * (Axy ** 2)))
+    e2 = 0.5 * (Ayy + Axx + np.sqrt((Ayy - Axx) ** 2 + 4 * (Axy ** 2)))
+
+    magnitude = exposure.adjust_sigmoid(e2-e1, cutoff=0.5, gain=2)
+
+    # magnitude = np.hypot(isobel, jsobel)
+    #
+    # Make the eroded mask. Setting the border value to zero will wipe
+    # out the image edges for us.
+    #
+    mask = np.ones(image.shape)
+    s = generate_binary_structure(2, 2)
+    eroded_mask = binary_erosion(mask, s, border_value=0)
+    eroded_mask = eroded_mask & (magnitude > 0)
+    #
+    #--------- Find local maxima --------------
+    #
+    # Assign each point to have a normal of 0-45 degrees, 45-90 degrees,
+    # 90-135 degrees and 135-180 degrees.
+    #
+    local_maxima = np.zeros(image.shape, bool)
+    #----- 0 to 45 degrees ------
+    pts_plus = (isobel >= 0) & (jsobel >= 0) & (abs_isobel >= abs_jsobel)
+    pts_minus = (isobel <= 0) & (jsobel <= 0) & (abs_isobel >= abs_jsobel)
+    pts = pts_plus | pts_minus
+    pts = eroded_mask & pts
+    # Get the magnitudes shifted left to make a matrix of the points to the
+    # right of pts. Similarly, shift left and down to get the points to the
+    # top right of pts.
+    c1 = magnitude[1:, :][pts[:-1, :]]
+    c2 = magnitude[1:, 1:][pts[:-1, :-1]]
+    m = magnitude[pts]
+    w = abs_jsobel[pts] / abs_isobel[pts]
+    c_plus = c2 * w + c1 * (1 - w) <= m
+    c1 = magnitude[:-1, :][pts[1:, :]]
+    c2 = magnitude[:-1, :-1][pts[1:, 1:]]
+    c_minus = c2 * w + c1 * (1 - w) <= m
+    local_maxima[pts] = c_plus & c_minus
+    #----- 45 to 90 degrees ------
+    # Mix diagonal and vertical
+    #
+    pts_plus = (isobel >= 0) & (jsobel >= 0) & (abs_isobel <= abs_jsobel)
+    pts_minus = (isobel <= 0) & (jsobel <= 0) & (abs_isobel <= abs_jsobel)
+    pts = pts_plus | pts_minus
+    pts = eroded_mask & pts
+    c1 = magnitude[:, 1:][pts[:, :-1]]
+    c2 = magnitude[1:, 1:][pts[:-1, :-1]]
+    m = magnitude[pts]
+    w = abs_isobel[pts] / abs_jsobel[pts]
+    c_plus = c2 * w + c1 * (1 - w) <= m
+    c1 = magnitude[:, :-1][pts[:, 1:]]
+    c2 = magnitude[:-1, :-1][pts[1:, 1:]]
+    c_minus = c2 * w + c1 * (1 - w) <= m
+    local_maxima[pts] = c_plus & c_minus
+    #----- 90 to 135 degrees ------
+    # Mix anti-diagonal and vertical
+    #
+    pts_plus = (isobel <= 0) & (jsobel >= 0) & (abs_isobel <= abs_jsobel)
+    pts_minus = (isobel >= 0) & (jsobel <= 0) & (abs_isobel <= abs_jsobel)
+    pts = pts_plus | pts_minus
+    pts = eroded_mask & pts
+    c1a = magnitude[:, 1:][pts[:, :-1]]
+    c2a = magnitude[:-1, 1:][pts[1:, :-1]]
+    m = magnitude[pts]
+    w = abs_isobel[pts] / abs_jsobel[pts]
+    c_plus = c2a * w + c1a * (1.0 - w) <= m
+    c1 = magnitude[:, :-1][pts[:, 1:]]
+    c2 = magnitude[1:, :-1][pts[:-1, 1:]]
+    c_minus = c2 * w + c1 * (1.0 - w) <= m
+    local_maxima[pts] = c_plus & c_minus
+    #----- 135 to 180 degrees ------
+    # Mix anti-diagonal and anti-horizontal
+    #
+    pts_plus = (isobel <= 0) & (jsobel >= 0) & (abs_isobel >= abs_jsobel)
+    pts_minus = (isobel >= 0) & (jsobel <= 0) & (abs_isobel >= abs_jsobel)
+    pts = pts_plus | pts_minus
+    pts = eroded_mask & pts
+    c1 = magnitude[:-1, :][pts[1:, :]]
+    c2 = magnitude[:-1, 1:][pts[1:, :-1]]
+    m = magnitude[pts]
+    w = abs_jsobel[pts] / abs_isobel[pts]
+    c_plus = c2 * w + c1 * (1 - w) <= m
+    c1 = magnitude[1:, :][pts[:-1, :]]
+    c2 = magnitude[1:, :-1][pts[:-1, 1:]]
+    c_minus = c2 * w + c1 * (1 - w) <= m
+    local_maxima[pts] = c_plus & c_minus
+
+
+    #
+    #---- Create two masks at the two thresholds.
+    #
+    high_mask = local_maxima & (magnitude >= high_threshold)
+    low_mask = local_maxima & (magnitude >= low_threshold)
+    #
+    # Segment the low-mask, then only keep low-segments that have
+    # some high_mask component in them
+    #
+    strel = np.ones((3, 3), bool)
+    labels, count = label(low_mask, strel)
+    if count == 0:
+        return low_mask
+
+    sums = (np.array(ndi.sum(high_mask, labels,
+                             np.arange(count, dtype=np.int32) + 1),
+                     copy=False, ndmin=1))
+    good_label = np.zeros((count + 1,), bool)
+    good_label[1:] = sums > 0
+    output_mask = good_label[labels]
+    return output_mask
+
+
+def repair_edges(edges, im_grad):
+    # connect contiguous edges, disconnect edges w/ sharp angles
+    # expect a binary edge image, like from feature.canny
+    # im_grad should be complex (array of vectors)
+
+    label_edges = morphology.label(edges)
+
+    uq_edges = np.unique(label_edges)
+    uq_edges = uq_edges[uq_edges>0]
+
+    # first, go through and break edges at corners
+    for e in uq_edges:
+
+
+
+def order_points(edge_points):
+    # convert edge masks to ordered x-y coords
+
+    if isinstance(edge_points, list):
+        edge_points = np.array(edge_points)
+
+    if edge_points.shape[1] > 2:
+        # starting w/ imagelike thing, get the points
+        edge_points = np.column_stack(np.where(edge_points))
+
+    dists = distance.squareform(distance.pdist(edge_points))
+    # make binary connectedness graph, max dist is ~1.4 for diagonal pix
+    # convert to 3 and 2 so singly-connected points are always <4
+    dists[dists > 1.5] = 0
+    dists[dists >1]    = 3
+    dists[dists == 1]  = 2
+
+    # check if we have easy edges
+    dists_sum = np.sum(dists, axis=1)
+
+    ends = np.where(dists_sum<4)[0]
+    if len(ends)>0:
+        pt_i = ends[0]
+        first_i = ends[0]
+        got_end = True
+    else:
+        # otherwise just start at the beginning
+        pt_i = 0
+        first_i = 0
+        got_end = False
+
+    # walk through our dist graph, gathering points as we go
+    inds = range(len(edge_points))
+    new_pts = dq()
+    forwards = True
+    # this confusing bundle will get reused a bit...
+    # we are making a new list of points, and don't want to double-count points
+    # but we can't pop from edge_points directly, because then the indices from the
+    # dist mat will be wrong. Instead we make a list of all the indices and pop
+    # from that. But since popping will change the index/value parity, we
+    # have to double index inds.pop(inds.index(etc.))
+
+    new_pts.append(edge_points[inds.pop(inds.index(pt_i))])
+    while True:
+        # get dict of connected points and distances
+        # filtered by whether the index hasn't been added yet
+        connected_pts = {k: dists[pt_i,k] for k in np.where(dists[pt_i,:])[0] if k in inds}
+
+        # if we get nothing, we're either done or we have to go back to the first pt
+        if len(connected_pts) == 0:
+            if got_end:
+                # still have points left, go back to first and go backwards
+                pt_i = first_i
+                forwards = False
+                got_end = False
+                continue
+            else:
+                # got to the end lets get outta here
+                break
+
+        # find point with min distance (take horiz/vert points before diags)
+        pt_i = min(connected_pts, key=connected_pts.get)
+        if forwards:
+            new_pts.append(edge_points[inds.pop(inds.index(pt_i))])
+        else:
+            new_pts.appendleft(edge_points[inds.pop(inds.index(pt_i))])
+
+    return np.array(new_pts)
