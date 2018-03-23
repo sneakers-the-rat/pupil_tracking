@@ -5,7 +5,7 @@ from scipy.spatial import distance
 from skimage import filters, exposure, feature, morphology, measure, img_as_float
 from collections import deque as dq
 from pandas import ewma, ewmstd
-from itertools import count
+from itertools import count, cycle
 from sklearn.linear_model import LogisticRegression
 from sklearn.preprocessing import normalize
 import scipy.ndimage as ndi
@@ -72,12 +72,19 @@ def draw_circle(event,x,y,flags,param):
         drawing = False
         #cv2.circle(frame_pupil,(ix,iy),rad,(255,255,255),-1)
 
-def edges2xy(edges):
-    edges_xy = np.where(edges)
+def edges2xy(edges, which_edge=None, sort=True):
+    if not isinstance(which_edge, int):
+        edges_xy = np.where(edges)
+    else:
+        edges_xy = np.where(edges==int(which_edge))
+
     edges_xy = np.column_stack(edges_xy)
 
-    # flip lr because coords are flipped for images
-    return np.fliplr(edges_xy)
+    # reorder so points are in spatial order (rather than axis=0 order)
+    if sort:
+        edges_xy = order_points(edges_xy)
+
+    return edges_xy
 
 
 
@@ -119,34 +126,6 @@ def preprocess_image_old(img, roi, sig_cutoff=0.5, sig_gain=1, n_colors=12,
 
     return img
 
-def process_edges(edges, x, y, rad):
-    true_ellipse = np.array([x,y,rad])
-
-    edges = morphology.label(edges)
-    uq_edges = np.unique(edges)
-    uq_edges = uq_edges[uq_edges>0]
-    ellipses = [fit_ellipse(edges, e) for e in uq_edges]
-
-    if len(ellipses) == 0:
-        return False, 0, 0, 0
-
-    # compute mean squared error between pupil & ellipse params
-    errors = []
-    for e in ellipses:
-        try:
-            ellipse_param = e.params[0:2]
-            ellipse_param.append(np.max(e.params[2:4]))
-            ellipse_param = np.array(ellipse_param)
-            errors.append(np.mean((true_ellipse-ellipse_param)**2))
-        except TypeError:
-            # if ellipse couldn't fit, for example
-            pass
-
-    min_error_ind = errors.index(np.min(errors))
-    min_error_ellipse = ellipses[min_error_ind]
-    min_error_points = np.where(edges == min_error_ind+1)
-    ret = True
-    return ret, min_error_points, min_error_ellipse, edges
 
 def fit_ellipse(edges, which_edge):
     edge_points = np.where(edges == which_edge)
@@ -209,7 +188,7 @@ def edge_vectors(frame, sigma):
 
     return grad_x, grad_y, angle, edge_scale
 
-def scharr_canny(image, sigma, low_threshold, high_threshold):
+def scharr_canny(image, sigma, low_threshold=0.2, high_threshold=0.5):
     # skimage's canny but we get scharr grads instead of sobel,
     # and use the eigenvalues of the structure tensor rather than the hypotenuse
 
@@ -225,7 +204,7 @@ def scharr_canny(image, sigma, low_threshold, high_threshold):
     e1 = 0.5 * (Ayy + Axx - np.sqrt((Ayy - Axx) ** 2 + 4 * (Axy ** 2)))
     e2 = 0.5 * (Ayy + Axx + np.sqrt((Ayy - Axx) ** 2 + 4 * (Axy ** 2)))
 
-    magnitude = exposure.adjust_sigmoid(e2-e1, cutoff=0.5, gain=2)
+    magnitude = e2-e1
 
     # magnitude = np.hypot(isobel, jsobel)
     #
@@ -333,7 +312,7 @@ def scharr_canny(image, sigma, low_threshold, high_threshold):
     return output_mask
 
 
-def repair_edges(edges, im_grad):
+def repair_edges(edges, frame):
     # connect contiguous edges, disconnect edges w/ sharp angles
     # expect a binary edge image, like from feature.canny
     # im_grad should be complex (array of vectors)
@@ -343,9 +322,178 @@ def repair_edges(edges, im_grad):
     uq_edges = np.unique(label_edges)
     uq_edges = uq_edges[uq_edges>0]
 
+    if len(uq_edges) == 0:
+        return
+
+    # delete tiny edges
+    for e in uq_edges:
+        edge_xy = edges2xy(label_edges, e, sort=False)
+        if edge_xy.shape[0] < 20:
+            edges[edge_xy[:,0], edge_xy[:,1]] = 0
+            uq_edges = uq_edges[uq_edges!=e]
+
+
     # first, go through and break edges at corners
     for e in uq_edges:
+        edge_xy = edges2xy(label_edges, e)
+        if len(edge_xy) == 0:
+            return
+        delete_points = break_corners(edge_xy)
 
+        # if delete_points gets returned as False, delete this whole segment
+        if delete_points == False:
+            edges[edge_xy[:,0], edge_xy[:,1]] = 0
+        elif len(delete_points)>0:
+            delete_mask = np.zeros(edges.shape, dtype=np.bool)
+            for p in delete_points:
+                delete_mask[p[0], p[1]] = True
+            # do a dilation w/ 9-pt square to get all the neighboring points too
+            delete_mask = morphology.binary_dilation(delete_mask, selem=morphology.square(3))
+
+            edges[delete_mask] = 0
+
+    # relabel
+    label_edges = morphology.label(edges)
+    uq_edges = np.unique(label_edges)
+    uq_edges = uq_edges[uq_edges>0]
+
+
+    # filter edges that are convex around darkness
+    # find the nth percentile to threshold above
+    thresh = filters.threshold_otsu(frame)
+
+    for e in uq_edges:
+        edge_xy = edges2xy(label_edges, e)
+        # select a random subset of points and get their midpoint
+        n_points = edge_xy.shape[0]
+        sample_1 = edge_xy[np.random.randint(0, n_points, 100), :]
+        sample_2 = edge_xy[np.random.randint(0, n_points, 100), :]
+
+        midpoints = np.mean(np.array([sample_1, sample_2]), axis=0).astype(np.int)
+        # get median of midpoint values
+        midpoint_med = np.median(frame[midpoints[:,0], midpoints[:,1]])
+
+        if midpoint_med < thresh:
+            edges[edge_xy[:,0], edge_xy[:,1]] = 0
+
+
+    return edges
+
+
+
+
+
+
+
+
+
+
+def break_corners(edge_xy, return_segments=False, corner_thresh=1.2):
+    # pass in an ordered list of x/y coords,
+    # using prasad's line estimation we break edges at sharp turns/inflection points
+    # returns an array of coords of corners/inflection points to
+    # modify the edge image
+    # Sharp turn threshold is set to ~80 degrees (1.4 rads) by default.
+
+    # make prasad segments
+    # keep both point and segment representations,
+    # we want to work with segments, but we ultimately need to
+    # figure out which point to delete
+    #
+    # there will be n points, n-1 segments, and n-2 angles.
+    # so splitting the edge at point 0<i<n (we don't split endpoints dummy!)
+    # will depend on angle i-1
+
+    segs_points = prasad_lines(edge_xy)
+    segs = nodes2segs(segs_points)
+
+    # get angles between segments
+    angles = []
+    for i in range(len(segs)-1):
+        # make segments unit vectors
+        seg1, seg2 = segs[i], segs[i+1]
+        seg_n = normalize([[seg1[1][0]-seg1[0][0], seg1[1][1]-seg1[0][1]],
+                              [seg2[1][0]-seg2[0][0], seg2[1][1]-seg2[0][1]]])
+
+        # dot product of vector 2 and perp. vector to v1 (x,y)T = (-y,x)
+
+
+        angles.append(-seg_n[0,1]*seg_n[1,0]+seg_n[0,0]*seg_n[1,1])
+
+    # first thing's first, if we get back a 2 pt segment, or a
+    #  3 point segment with a v sharp angle,
+    # recommend to delete the whole segment by returning False
+
+    if len(angles) == 0:
+        return False
+    elif len(angles) == 1 and abs(angles[0])>corner_thresh:
+        return False
+
+
+    # otherwise go through and find sharp angles and inflection points
+    # boolean mask for deletion of points
+    delete_pts = np.zeros(len(segs_points), dtype=np.bool)
+    angles = np.array(angles)
+
+    # look for sharp edges
+    delete_pts[np.where(angles > corner_thresh)[0] + 1] = True
+
+    # and inflection points
+    # sorry for how this works so sucky, head unclear.
+    signs = np.zeros(len(angles), dtype=np.bool)
+    signs[np.where(angles >= 0)] = True
+    last_deleted = False
+    for i in range(len(angles)):
+        if last_deleted:
+            # don't want to double-punish inflection points,
+            # when we cut, we make a new edge, so it doesnt make sense to
+            # also cut the next sign for being different because it has
+            # nothing to be different from in its new life
+            last_deleted =False
+            continue
+
+        if i>0:
+            if signs[i-1] != signs[i]:
+                delete_pts[i+1] =True
+                last_deleted=True
+
+
+    # return the inds of the points to delete
+    return [p for i, p in enumerate(segs_points) if delete_pts[i]]
+
+
+
+
+
+
+
+
+
+
+
+def nodes2segs(segs):
+    # convert a list of line segments specified by their x/y nodes
+    # to x/y coords for each segment
+    # ie.
+    #    [[1, 1], [2,2], [3,3]]
+    # becomes
+    #    [[[1,1], [2,2]],
+    #     [[2,2], [3,3]]]
+
+    # for an nx4 array:
+    # segs_out = np.column_stack((segs[:-1], segs[1:]))
+
+    # for a list of lists:
+    segs_out = []
+    for pt1, pt2 in zip(segs[:-1], segs[1:]):
+        segs_out.append([pt1, pt2])
+
+    return segs_out
+
+def plot_edge(labeled_edges, edge):
+    # given an image of labeled edges (m x n array of integer labels)
+    # scatterplot one edge in particular
+    pass
 
 
 def order_points(edge_points):
@@ -416,3 +564,132 @@ def order_points(edge_points):
             new_pts.appendleft(edge_points[inds.pop(inds.index(pt_i))])
 
     return np.array(new_pts)
+
+
+def prasad_lines(edge, return_metrics=False):
+    # edge should be a list of ordered coordinates
+    # all credit to http://ieeexplore.ieee.org/document/6166585/
+    # adapted from MATLAB scripts here: https://docs.google.com/open?id=0B10RxHxW3I92dG9SU0pNMV84alk
+    # don't expect a lot of commenting from me here,
+    # I don't claim to *understand* it, I just transcribed
+
+    x = edge[:,0]
+    y = edge[:,1]
+
+    first = 0
+    last = len(edge)-1
+
+    seglist = []
+    seglist.append([x[0], y[0]])
+
+    if return_metrics:
+        precision = []
+        reliability = []
+
+
+    while first<last:
+
+        mdev_results = prasad_maxlinedev(x[first:last], y[first:last], return_metrics=return_metrics)
+
+        while mdev_results['d_max'] > mdev_results['del_tol_max']:
+            last = mdev_results['index_d_max']+first
+            try:
+                mdev_results = prasad_maxlinedev(x[first:last], y[first:last], return_metrics=return_metrics)
+            except IndexError:
+                print(first, last, len(edge))
+        seglist.append([x[last], y[last]])
+        if return_metrics:
+            precision.append(mdev_results['precision'])
+            reliability.append(mdev_results['reliability'])
+
+        first = last
+        last = len(x)-1
+
+    if return_metrics:
+        return seglist, precision, reliability
+    else:
+        return seglist
+
+
+
+def prasad_maxlinedev(x, y, return_metrics=False):
+    # all credit to http://ieeexplore.ieee.org/document/6166585/
+    # adapted from MATLAB scripts here: https://docs.google.com/open?id=0B10RxHxW3I92dG9SU0pNMV84alk
+
+    x = x.astype(np.float)
+    y = y.astype(np.float)
+
+    results = {}
+
+    first = 0
+    last = len(x)-1
+
+    X = np.array([[x[0], y[0]], [x[last], y[last]]])
+    A = np.array([
+        [(y[0]-y[last]) / (y[0]*x[last] - y[last]*x[0])],
+        [(x[0]-x[last]) / (x[0]*y[last] - x[last]*y[0])]
+    ])
+
+    if np.isnan(A[0]) and np.isnan(A[1]):
+        devmat = np.column_stack((x-x[first], y-y[first])) ** 2
+        dev = np.abs(np.sqrt(np.sum(devmat, axis=1)))
+    elif np.isinf(A[0]) and np.isinf(A[1]):
+        c = x[0]/y[0]
+        devmat = np.column_stack((
+            x[:]/np.sqrt(1+c**2),
+            -c*y[:]/np.sqrt(1+c**2)
+        ))
+        dev = np.abs(np.sum(devmat, axis=1))
+    else:
+        devmat = np.column_stack((x, y))
+        dev = np.abs(np.matmul(devmat, A)-1.)/np.sqrt(np.sum(A**2))
+
+    results['d_max'] = np.max(dev)
+    results['index_d_max'] = np.argmax(dev)
+
+    s_mat = np.column_stack((x-x[first], y-y[first])) ** 2
+    s_max = np.max(np.sqrt(np.sum(s_mat, axis=1)))
+    del_phi_max = prasad_digital_error(s_max)
+    results['del_tol_max'] = np.tan((del_phi_max *s_max))
+
+    if return_metrics:
+        results['precision'] = np.linalg.norm(dev, ord=2) / np.sqrt(float(last))
+        results['reliability'] = np.sum(dev) / s_max
+
+    return results
+
+def prasad_digital_error(ss):
+    # all credit to http://ieeexplore.ieee.org/document/6166585/
+    # adapted from MATLAB scripts here: https://docs.google.com/open?id=0B10RxHxW3I92dG9SU0pNMV84alk
+
+    phi = np.arange(0, np.pi*2, np.pi / 360)
+
+    #s, phi = np.meshgrid(ss, phii)
+
+    sin_p = np.sin(phi)
+    cos_p = np.cos(phi)
+    sin_plus_cos = sin_p+cos_p
+    sin_minus_cos = sin_p-cos_p
+
+    term1 = []
+    term1.append(np.abs(cos_p))
+    term1.append(np.abs(sin_p))
+    term1.append(np.abs(sin_plus_cos))
+    term1.append(np.abs(sin_minus_cos))
+
+    tt2 = []
+    tt2.append(sin_p/ss)
+    tt2.append(cos_p/ ss)
+    tt2.append(sin_minus_cos/ ss)
+    tt2.append(sin_plus_cos/ ss)
+    tt2.extend([-tt2[0], -tt2[1], -tt2[2], -tt2[3]])
+
+    term2 = []
+    for t2_item in tt2:
+        term2.append(ss * (1 - t2_item + t2_item ** 2))
+
+    case_value = []
+    for c_i in range(8):
+        case_value.append((1/ ss ** 2) * term1[c_i%4] * term2[c_i])
+
+    return np.max(case_value)

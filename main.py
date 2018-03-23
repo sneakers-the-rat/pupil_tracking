@@ -59,7 +59,7 @@ cv2.destroyAllWindows()
 # Adjust preprocessing parameters
 ## Initial values -- have to use ints, we'll convert back later
 frame_params = imutils.preprocess_image(frame_orig, roi)
-edges_params = feature.canny(frame_params, sigma=3)
+edges_params = imutils.scharr_canny(frame_params, sigma=3)
 
 sig_cutoff = 50
 sig_gain = 5
@@ -71,8 +71,8 @@ cv2.namedWindow('params', flags=cv2.WINDOW_NORMAL)
 cv2.createTrackbar('Sigmoid Cutoff', 'params', sig_cutoff, 100, imutils.nothing)
 cv2.createTrackbar('Sigmoid Gain', 'params', sig_gain, 20, imutils.nothing)
 cv2.createTrackbar('Gaussian Blur', 'params', canny_sig, 700, imutils.nothing)
-cv2.createTrackbar('Canny High Threshold', 'params', canny_high, 100, imutils.nothing)
-cv2.createTrackbar('Canny Low Threshold', 'params', canny_low, 100, imutils.nothing)
+cv2.createTrackbar('Canny High Threshold', 'params', canny_high, 300, imutils.nothing)
+cv2.createTrackbar('Canny Low Threshold', 'params', canny_low, 300, imutils.nothing)
 
 while True:
     k = cv2.waitKey(1) & 0xFF
@@ -95,7 +95,7 @@ while True:
     frame = imutils.preprocess_image(frame_orig, roi,
                                             sig_cutoff=sig_cutoff,
                                             sig_gain=sig_gain)
-    edges_params = feature.canny(frame, sigma=canny_sig,
+    edges_params = imutils.scharr_canny(frame, sigma=canny_sig,
                                  high_threshold=canny_high, low_threshold=canny_low)
 
     frame_orig = cv2.cvtColor(frame_orig, cv2.COLOR_BGR2GRAY)
@@ -148,10 +148,15 @@ while True:
                                             sig_gain=sig_gain)
 
     # canny edge detection & reshaping coords
-    edges_params = feature.canny(frame, sigma=canny_sig,
+    edges_params = imutils.scharr_canny(frame, sigma=canny_sig,
                                  high_threshold=canny_high, low_threshold=canny_low)
 
-    labeled_edges = morphology.label(edges_params)
+
+    edges_params = imutils.repair_edges(edges_params, frame)
+    try:
+        labeled_edges = morphology.label(edges_params)
+    except:
+        continue
     uq_edges = np.unique(labeled_edges)
     uq_edges = uq_edges[uq_edges>0]
     ellipses = [imutils.fit_ellipse(labeled_edges, e) for e in uq_edges]
