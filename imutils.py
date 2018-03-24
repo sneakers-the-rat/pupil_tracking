@@ -11,8 +11,7 @@ from sklearn.preprocessing import normalize
 import scipy.ndimage as ndi
 from scipy.ndimage import (gaussian_filter,
                            generate_binary_structure, binary_erosion, label)
-
-
+from matplotlib import pyplot as plt
 # http://cdn.intechopen.com/pdfs/33559/InTech-Methods_for_ellipse_detection_from_edge_maps_of_real_images.pdf
 
 def crop(im, roi):
@@ -379,15 +378,6 @@ def repair_edges(edges, frame):
 
     return edges
 
-
-
-
-
-
-
-
-
-
 def break_corners(edge_xy, return_segments=False, corner_thresh=1.2):
     # pass in an ordered list of x/y coords,
     # using prasad's line estimation we break edges at sharp turns/inflection points
@@ -460,15 +450,6 @@ def break_corners(edge_xy, return_segments=False, corner_thresh=1.2):
 
     # return the inds of the points to delete
     return [p for i, p in enumerate(segs_points) if delete_pts[i]]
-
-
-
-
-
-
-
-
-
 
 
 def nodes2segs(segs):
@@ -693,3 +674,62 @@ def prasad_digital_error(ss):
         case_value.append((1/ ss ** 2) * term1[c_i%4] * term2[c_i])
 
     return np.max(case_value)
+
+
+from numpy import where, dstack, diff, meshgrid
+
+def find_intersections(A, B):
+
+    # min, max and all for arrays
+    amin = lambda x1, x2: where(x1<x2, x1, x2)
+    amax = lambda x1, x2: where(x1>x2, x1, x2)
+    aall = lambda abools: dstack(abools).all(axis=2)
+    slope = lambda line: (lambda d: d[:,1]/d[:,0])(diff(line, axis=0))
+
+    x11, x21 = meshgrid(A[:-1, 0], B[:-1, 0])
+    x12, x22 = meshgrid(A[1:, 0], B[1:, 0])
+    y11, y21 = meshgrid(A[:-1, 1], B[:-1, 1])
+    y12, y22 = meshgrid(A[1:, 1], B[1:, 1])
+
+    m1, m2 = meshgrid(slope(A), slope(B))
+    m1inv, m2inv = 1/m1, 1/m2
+
+    yi = (m1*(x21-x11-m2inv*y21) + y11)/(1 - m1*m2inv)
+    xi = (yi - y21)*m2inv + x21
+
+    xconds = (amin(x11, x12) < xi, xi <= amax(x11, x12),
+              amin(x21, x22) < xi, xi <= amax(x21, x22) )
+    yconds = (amin(y11, y12) < yi, yi <= amax(y11, y12),
+              amin(y21, y22) < yi, yi <= amax(y21, y22) )
+
+    return xi[aall(xconds)], yi[aall(yconds)]
+
+
+
+# do it
+#each vector a line
+# inds = np.indices(grad_x.shape)
+# inds_y = inds[0].flatten()
+# inds_x = inds[1].flatten()
+# inds = np.column_stack((inds_x, inds_y))
+
+# ends_y = inds_y+500*np.sin(angle.flatten())
+# ends_x = inds_x+500*np.cos(angle.flatten())
+# ends = np.column_stack((ends_x, ends_y))
+
+# perms_inds = inds.copy()
+# perms_ends = ends.copy()
+# np.random.shuffle(perms_inds)
+# np.random.shuffle(perms_ends)
+
+# intersections = line_intersect(inds, ends, perms_inds, perms_ends)
+
+def line_intersect(a1, a2, b1, b2):
+    da = np.atleast_2d(a2 - a1)
+    db = np.atleast_2d(b2 - b1)
+    dp = np.atleast_2d(a1 - b1)
+    dap = np.dot(da, T)
+    denom = np.sum(dap * db, axis=1)
+    num = np.sum(dap * dp, axis=1)
+    return np.atleast_2d(num / denom).T * db + b1
+
