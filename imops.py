@@ -139,7 +139,7 @@ def fit_ellipse(edges, which_edge):
 def nothing(x):
     pass
 
-def edge_vectors(frame, sigma):
+def edge_vectors(frame, sigma=1):
     """
     Get the eigenvectors/values of the structural tensor
     (1) https://arxiv.org/pdf/1402.5564.pdf
@@ -308,13 +308,21 @@ def scharr_canny(image, sigma, low_threshold=0.2, high_threshold=0.5):
     good_label = np.zeros((count + 1,), bool)
     good_label[1:] = sums > 0
     output_mask = good_label[labels]
+
+    # skeletonize to reduce thick pixels we mighta missed
+    output_mask = morphology.skeletonize(output_mask)
+
     return output_mask
 
 
-def repair_edges(edges, frame):
+def repair_edges(edges, grad_x, grad_y, frame):
     # connect contiguous edges, disconnect edges w/ sharp angles
     # expect a binary edge image, like from feature.canny
     # im_grad should be complex (array of vectors)
+
+    # super inefficient rn, will eventually just work with xy's directly but...
+    edges = edges.copy()
+
 
     label_edges = morphology.label(edges)
 
@@ -336,7 +344,7 @@ def repair_edges(edges, frame):
     for e in uq_edges:
         edge_xy = edges2xy(label_edges, e)
         if len(edge_xy) == 0:
-            return
+            continue
         delete_points = break_corners(edge_xy)
 
         # if delete_points gets returned as False, delete this whole segment
@@ -347,7 +355,7 @@ def repair_edges(edges, frame):
             for p in delete_points:
                 delete_mask[p[0], p[1]] = True
             # do a dilation w/ 9-pt square to get all the neighboring points too
-            delete_mask = morphology.binary_dilation(delete_mask, selem=morphology.square(3))
+            delete_mask = morphology.binary_dilation(delete_mask, selem=morphology.square(5))
 
             edges[delete_mask] = 0
 
@@ -358,32 +366,110 @@ def repair_edges(edges, frame):
 
 
     # filter edges that are convex around darkness
-    # find the nth percentile to threshold above
-    thresh = filters.threshold_otsu(frame)
-
     for e in uq_edges:
-        edge_xy = edges2xy(label_edges, e)
-        # select a random subset of points and get their midpoint
-        n_points = edge_xy.shape[0]
-        sample_1 = edge_xy[np.random.randint(0, n_points, 100), :]
-        sample_2 = edge_xy[np.random.randint(0, n_points, 100), :]
+        one_edge = label_edges.copy()
+        one_edge[one_edge != e] = 0
+        one_edge[one_edge == e] = 1
 
-        midpoints = np.mean(np.array([sample_1, sample_2]), axis=0).astype(np.int)
-        # get median of midpoint values
-        midpoint_med = np.median(frame[midpoints[:,0], midpoints[:,1]])
+        hull = morphology.convex_hull_image(one_edge)
 
-        if midpoint_med < thresh:
+        inner_points = np.logical_xor(hull, morphology.binary_erosion(hull, morphology.disk(5)))
+        outer_points = np.logical_xor(hull, morphology.binary_dilation(hull, morphology.disk(5)))
+
+        inner_val = np.median(frame[inner_points])
+        outer_val = np.median(frame[outer_points])
+
+        if inner_val < outer_val:
+            edge_xy = edges2xy(label_edges, e)
             edges[edge_xy[:,0], edge_xy[:,1]] = 0
+
+    # relabel
+    label_edges = morphology.label(edges)
+    uq_edges = np.unique(label_edges)
+    uq_edges = uq_edges[uq_edges>0]
+
+    # connect nearby edges with similar gradient vector
+    # one more time get the edges
+    edges_xy = [edges2xy(label_edges, e) for e in uq_edges]
+    edge_points = np.row_stack([(e[0], e[-1]) for e in edges_xy])
+    # get the  euclidean distances between points as a fraction of image size
+    edge_dists = distance.squareform(distance.pdist(edge_points))/np.max(edges.shape)
+
+    # and the dot product of the image gradient
+    edge_grads = np.column_stack((grad_x[edge_points[:,0], edge_points[:,1]],
+                                  grad_y[edge_points[:,0], edge_points[:,1]]))
+    edge_grads = distance.squareform(distance.pdist(edge_grads, "cosine"))
+
+    # and the affinity of the edges
+    # want edges that not only point in opposite directions,
+    # but point at each other
+
+    # get direction of edge points from line segments
+    segs = [prasad_lines(e) for e in edges_xy]
+
+    edge_segs = np.row_stack([((e[0],e[1]),(e[-1],e[-2])) for e in segs])
+    n_endpoints = len(edge_segs)
+    edge_segs = normalize(edge_segs[:,0,:] - edge_segs[:,1,:])
+
+    # cosine distance between direction of edge at endpoints and direction to other points
+    # asymmetrical, affinity from point in row to point in column
+    edge_affinity = np.row_stack(
+        [distance.cdist(edge_segs[i,:].reshape(1,2), edge_points-edge_points[i,:], "cosine")
+         for i in range(len(edge_segs))]
+    )
+
+    # average top and bottom triangles
+    # get upper/lower indices manually so they match up right
+    triu_indices = np.triu_indices(n_endpoints, k= 1)
+    tril_indices = triu_indices[::-1]
+
+    pair_affinity = np.mean((edge_affinity[tril_indices],
+                             edge_affinity[triu_indices]), axis=0)
+    edge_affinity[tril_indices] = pair_affinity
+    edge_affinity[triu_indices] = pair_affinity
+
+    ##
+    # Clean up & combine merge metrics
+    edge_dists = 1-((edge_dists-np.min(edge_dists))/(np.max(edge_dists)-np.min(edge_dists)))
+    edge_grads = 1-(edge_grads/2.) # cosine distance is 0-2
+    edge_affinity = 1-(edge_affinity/2.)
+
+    merge_score = edge_dists**2 * edge_grads**2 * edge_affinity**2
+    merge_score[np.isnan(merge_score)] = 0.
+
+    # zero nonmax joins (only want to join each end one time at most..
+    # only keep scores if mutually max'd (avoids 3-way joins)
+    col_max = np.argmax(merge_score, axis=0)
+    row_max = np.argmax(merge_score, axis=1)
+    dupe_mask = np.ones_like(merge_score, dtype=np.bool)
+    dupe_mask[col_max[col_max], col_max] = 0
+    merge_score[dupe_mask] = 0.
+
+    # now only need triangle
+    merge_score[triu_indices] = 0.
+
+    # get good edges to merge
+    merge_points = np.column_stack(np.where(merge_score>.5))
+
+    # that are not on the same curve
+    merge_points = merge_points[(merge_points/2)[:,0] != (merge_points/2)[:,1],:]
+
+    # and draw them
+    for i in range(len(merge_points)):
+        points = np.row_stack((edge_points[merge_points[i,0],:],
+                              edge_points[merge_points[i,1],:]))
+        join_points = line_mask(points)
+        edges[join_points[:,0], join_points[:,1]] = 1
 
 
     return edges
 
-def break_corners(edge_xy, return_segments=False, corner_thresh=1.2):
+def break_corners(edge_xy, return_segments=False, corner_thresh=.8):
     # pass in an ordered list of x/y coords,
     # using prasad's line estimation we break edges at sharp turns/inflection points
     # returns an array of coords of corners/inflection points to
     # modify the edge image
-    # Sharp turn threshold is set to ~80 degrees (1.4 rads) by default.
+    # Sharp turn threshold is set to ~65 degrees (1.1 rads) by default.
 
     # make prasad segments
     # keep both point and segment representations,
@@ -423,7 +509,7 @@ def break_corners(edge_xy, return_segments=False, corner_thresh=1.2):
     # otherwise go through and find sharp angles and inflection points
     # boolean mask for deletion of points
     delete_pts = np.zeros(len(segs_points), dtype=np.bool)
-    angles = np.array(angles)
+    angles = np.array(np.abs(angles))
 
     # look for sharp edges
     delete_pts[np.where(angles > corner_thresh)[0] + 1] = True
@@ -574,10 +660,12 @@ def prasad_lines(edge, return_metrics=False):
 
         while mdev_results['d_max'] > mdev_results['del_tol_max']:
             last = mdev_results['index_d_max']+first
+            if last == first+1:
+                break
             try:
                 mdev_results = prasad_maxlinedev(x[first:last], y[first:last], return_metrics=return_metrics)
             except IndexError:
-                print(first, last, len(edge))
+                break
         seglist.append([x[last], y[last]])
         if return_metrics:
             precision.append(mdev_results['precision'])
@@ -645,7 +733,7 @@ def prasad_digital_error(ss):
 
     phi = np.arange(0, np.pi*2, np.pi / 360)
 
-    #s, phi = np.meshgrid(ss, phii)
+    #s, phii = np.meshgrid(ss, phi)
 
     sin_p = np.sin(phi)
     cos_p = np.cos(phi)
@@ -733,3 +821,10 @@ def line_intersect(a1, a2, b1, b2):
     num = np.sum(dap * dp, axis=1)
     return np.atleast_2d(num / denom).T * db + b1
 
+
+def line_mask(ends):
+    d = np.diff(ends, axis=0)[0]
+    j = np.argmax(np.abs(d))
+    D = d[j]
+    aD = np.abs(D)
+    return ends[0] + (np.outer(np.arange(aD + 1), d) + (aD >> 1)) // aD

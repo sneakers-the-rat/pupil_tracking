@@ -5,7 +5,8 @@ from skimage import feature, morphology, img_as_float, draw
 from itertools import count
 from time import time
 
-import imutils
+
+import imops
 import model
 
 def draw_circle(event,x,y,flags,param):
@@ -26,7 +27,7 @@ def draw_circle(event,x,y,flags,param):
 # Initialization
 # TODO: Ask for file, list of files
 
-vid_file = '/home/lab/pupil_vids/nick3.avi'
+vid_file = '/Users/jonny/pupil_vids/nick3.avi'
 vid = cv2.VideoCapture(vid_file)
 ret, frame = vid.read()
 frame_orig = frame.copy()
@@ -34,7 +35,7 @@ frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
 # Get ROIs - cropping & pupil center
 roi = cv2.selectROI(frame)
-frame = imutils.crop(frame, roi)
+frame = imops.crop(frame, roi)
 cv2.destroyAllWindows()
 
 # Select pupil
@@ -58,8 +59,8 @@ cv2.destroyAllWindows()
 
 # Adjust preprocessing parameters
 ## Initial values -- have to use ints, we'll convert back later
-frame_params = imutils.preprocess_image(frame_orig, roi)
-edges_params = imutils.scharr_canny(frame_params, sigma=3)
+frame_params = imops.preprocess_image(frame_orig, roi)
+edges_params = imops.scharr_canny(frame_params, sigma=3)
 
 sig_cutoff = 50
 sig_gain = 5
@@ -68,11 +69,11 @@ canny_high = 50
 canny_low  = 10
 
 cv2.namedWindow('params', flags=cv2.WINDOW_NORMAL)
-cv2.createTrackbar('Sigmoid Cutoff', 'params', sig_cutoff, 100, imutils.nothing)
-cv2.createTrackbar('Sigmoid Gain', 'params', sig_gain, 20, imutils.nothing)
-cv2.createTrackbar('Gaussian Blur', 'params', canny_sig, 700, imutils.nothing)
-cv2.createTrackbar('Canny High Threshold', 'params', canny_high, 300, imutils.nothing)
-cv2.createTrackbar('Canny Low Threshold', 'params', canny_low, 300, imutils.nothing)
+cv2.createTrackbar('Sigmoid Cutoff', 'params', sig_cutoff, 100, imops.nothing)
+cv2.createTrackbar('Sigmoid Gain', 'params', sig_gain, 20, imops.nothing)
+cv2.createTrackbar('Gaussian Blur', 'params', canny_sig, 700, imops.nothing)
+cv2.createTrackbar('Canny High Threshold', 'params', canny_high, 300, imops.nothing)
+cv2.createTrackbar('Canny Low Threshold', 'params', canny_low, 300, imops.nothing)
 
 while True:
     k = cv2.waitKey(1) & 0xFF
@@ -92,14 +93,14 @@ while True:
     canny_high = canny_high/100.
     canny_low  = canny_low/100.
 
-    frame = imutils.preprocess_image(frame_orig, roi,
-                                            sig_cutoff=sig_cutoff,
-                                            sig_gain=sig_gain)
-    edges_params = imutils.scharr_canny(frame, sigma=canny_sig,
-                                 high_threshold=canny_high, low_threshold=canny_low)
+    frame = imops.preprocess_image(frame_orig, roi,
+                                   sig_cutoff=sig_cutoff,
+                                   sig_gain=sig_gain)
+    edges_params = imops.scharr_canny(frame, sigma=canny_sig,
+                                      high_threshold=canny_high, low_threshold=canny_low)
 
     frame_orig = cv2.cvtColor(frame_orig, cv2.COLOR_BGR2GRAY)
-    frame_orig = imutils.crop(frame_orig, roi)
+    frame_orig = imops.crop(frame_orig, roi)
     frame_orig = img_as_float(frame_orig)
 
 
@@ -143,35 +144,31 @@ while True:
         print('frame {} of {}, {} fps'.format(n_frame, total_frames, fps))
 
 
-    frame = imutils.preprocess_image(frame_orig, roi,
-                                            sig_cutoff=sig_cutoff,
-                                            sig_gain=sig_gain)
+    frame = imops.preprocess_image(frame_orig, roi,
+                                   sig_cutoff=sig_cutoff,
+                                   sig_gain=sig_gain)
 
     # canny edge detection & reshaping coords
-    edges_params = imutils.scharr_canny(frame, sigma=canny_sig,
-                                 high_threshold=canny_high, low_threshold=canny_low)
+    edges_params = imops.scharr_canny(frame, sigma=canny_sig,
+                                      high_threshold=canny_high, low_threshold=canny_low)
 
 
-    edges_params = imutils.repair_edges(edges_params, frame)
+    edges_params = imops.repair_edges(edges_params, frame)
     try:
         labeled_edges = morphology.label(edges_params)
     except:
         continue
     uq_edges = np.unique(labeled_edges)
     uq_edges = uq_edges[uq_edges>0]
-    ellipses = [imutils.fit_ellipse(labeled_edges, e) for e in uq_edges]
+    ellipses = [imops.fit_ellipse(labeled_edges, e) for e in uq_edges]
     ell_pts = np.ndarray(shape=(0,2))
     for e in ellipses:
         if not e:
             continue
-        try:
-            points = e.predict_xy(thetas)
-        except:
-            continue
-        if any(points.flatten()<0) or any(points[:,0]>labeled_edges.shape[1])\
-            or any(points[:,1]>labeled_edges.shape[0]):
-            # outside the image, skip
-            continue
+        points = e.predict_xy(thetas)
+        points[points<0] = 0
+        points[points[:,0]>labeled_edges.shape[1],0] = labeled_edges.shape[1]
+        points[points[:,1]>labeled_edges.shape[0],1] = labeled_edges.shape[0]
 
         ell_pts = np.concatenate((ell_pts, points), axis=0)
         ell_params = e.params
@@ -189,7 +186,7 @@ while True:
 
     # draw points on the images
     ell_pts = ell_pts.astype(np.int)
-    frame_orig = imutils.crop(frame_orig, roi)
+    frame_orig = imops.crop(frame_orig, roi)
     frame_orig = img_as_float(frame_orig)
 
     # make other images color

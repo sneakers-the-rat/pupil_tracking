@@ -9,7 +9,7 @@ from skimage import filters
 from time import time
 from skvideo import io
 
-import imutils
+import imops
 
 def crop(im, roi):
     return im[roi[1]:roi[1]+roi[3], roi[0]:roi[0]+roi[2]]
@@ -379,7 +379,7 @@ while True:
     try:
         aframe_params = params_smooth.loc[n_frame,['x','y','a','b','t']]
     except:
-        frame_orig = imutils.crop(frame_orig, roi)
+        frame_orig = imops.crop(frame_orig, roi)
         frame_orig = img_as_float(frame_orig)
         cv2.imshow('run', frame_orig)
         frame_orig = frame_orig * 255
@@ -395,7 +395,7 @@ while True:
     points = points.astype(np.int)
 
 
-    frame_orig = imutils.crop(frame_orig, roi)
+    frame_orig = imops.crop(frame_orig, roi)
     frame_orig = img_as_float(frame_orig)
 
     draw.set_color(frame_orig, (points[:, 1], points[:, 0]), (1, 0, 0))
@@ -410,3 +410,37 @@ while True:
 
 writer.close()
 cv2.destroyAllWindows()
+
+ret, frame_orig = vid.read()
+frame = imops.preprocess_image(frame_orig, roi,
+                               sig_cutoff=sig_cutoff,
+                               sig_gain=sig_gain)
+edges_params = imops.scharr_canny(frame, sigma=canny_sig,
+                                  high_threshold=canny_high, low_threshold=canny_low)
+ax.imshow(edges_params)
+
+
+from PIL import ImageFilter, Image
+frame_8 = frame.copy()
+frame_8 = filters.gaussian(frame_8, sigma=2)
+frame_8 = frame_8 * 255
+frame_8 = frame_8.astype(np.uint8)
+im = Image.fromarray(frame_8)
+im1 = im.filter(ImageFilter.EDGE_ENHANCE)
+im.show()
+im1.show()
+
+##################
+fig, ax = plt.subplots(2,1)
+for i in range(100):
+    ret, frame_orig = vid.read()
+    frame = imops.preprocess_image(frame_orig, roi,
+                                   sig_cutoff=sig_cutoff,
+                                   sig_gain=sig_gain)
+    edges_params = imops.scharr_canny(frame, sigma=canny_sig,
+                                      high_threshold=canny_high, low_threshold=canny_low)
+    grad_x, grad_y, _,_ = edge_vectors(frame, canny_sig)
+    edges_rep = repair_edges(edges_params, grad_x, grad_y, frame)
+    ax[0].imshow(edges_params)
+    ax[1].imshow(edges_rep)
+    plt.pause(5)
