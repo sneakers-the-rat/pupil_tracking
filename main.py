@@ -27,7 +27,7 @@ def draw_circle(event,x,y,flags,param):
 # Initialization
 # TODO: Ask for file, list of files
 
-vid_file = '/Users/jonny/pupil_vids/nick3.avi'
+vid_file = '/home/lab/pupil_vids/nick3.avi'
 vid = cv2.VideoCapture(vid_file)
 ret, frame = vid.read()
 frame_orig = frame.copy()
@@ -113,7 +113,7 @@ vid = cv2.VideoCapture(vid_file)
 total_frames = vid.get(cv2.CAP_PROP_FRAME_COUNT)
 #pmod = model.Pupil_Model(ix, iy, rad)
 
-cv2.namedWindow('run', flags=cv2.WINDOW_NORMAL)
+#cv2.namedWindow('run', flags=cv2.WINDOW_NORMAL)
 #fig, ax = plt.subplots(4,1)
 thetas = np.linspace(0, np.pi*2, num=100, endpoint=False)
 frame_counter = count()
@@ -138,7 +138,7 @@ while True:
         break
 
     n_frame = frame_counter.next()
-    if n_frame % 500 == 0:
+    if n_frame % 10 == 0:
         now = time()
         fps = n_frame/(now-starttime)
         print('frame {} of {}, {} fps'.format(n_frame, total_frames, fps))
@@ -152,8 +152,8 @@ while True:
     edges_params = imops.scharr_canny(frame, sigma=canny_sig,
                                       high_threshold=canny_high, low_threshold=canny_low)
 
-
     edges_params = imops.repair_edges(edges_params, frame)
+
     try:
         labeled_edges = morphology.label(edges_params)
     except:
@@ -185,18 +185,18 @@ while True:
         v_list.append(np.mean(frame[ell_mask_x, ell_mask_y]))
 
     # draw points on the images
-    ell_pts = ell_pts.astype(np.int)
-    frame_orig = imops.crop(frame_orig, roi)
-    frame_orig = img_as_float(frame_orig)
+    #ell_pts = ell_pts.astype(np.int)
+    #frame_orig = imops.crop(frame_orig, roi)
+    #frame_orig = img_as_float(frame_orig)
 
     # make other images color
-    edges_params_c = np.repeat(edges_params[:,:,np.newaxis], 3, axis=2)
+    #edges_params_c = np.repeat(edges_params[:,:,np.newaxis], 3, axis=2)
 
     # draw circle, have to flip x/y coords again...
-    draw.set_color(frame_orig, (ell_pts[:,1], ell_pts[:,0]), (0,0,255))
-    draw.set_color(edges_params_c, (ell_pts[:,1], ell_pts[:,0]), (0, 0, 1))
+    #draw.set_color(frame_orig, (ell_pts[:,1], ell_pts[:,0]), (0,0,255))
+    #draw.set_color(edges_params_c, (ell_pts[:,1], ell_pts[:,0]), (0, 0, 1))
 
-    cv2.imshow('run', np.vstack([frame_orig, edges_params_c]))
+    #cv2.imshow('run', np.vstack([frame_orig, edges_params_c]))
 
 
 

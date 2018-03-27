@@ -9,6 +9,17 @@ from skimage import filters
 from time import time
 from skvideo import io
 
+import numpy as np
+import cv2
+from scipy.spatial.distance import euclidean
+from skimage import feature, morphology, img_as_float, draw
+from itertools import count
+from time import time
+
+
+import imops
+import model
+
 import imops
 
 def crop(im, roi):
@@ -431,7 +442,7 @@ im.show()
 im1.show()
 
 ##################
-fig, ax = plt.subplots(2,1)
+fig, ax = plt.subplots(1,2)
 for i in range(100):
     ret, frame_orig = vid.read()
     frame = imops.preprocess_image(frame_orig, roi,
@@ -439,8 +450,102 @@ for i in range(100):
                                    sig_gain=sig_gain)
     edges_params = imops.scharr_canny(frame, sigma=canny_sig,
                                       high_threshold=canny_high, low_threshold=canny_low)
-    grad_x, grad_y, _,_ = edge_vectors(frame, canny_sig)
-    edges_rep = repair_edges(edges_params, grad_x, grad_y, frame)
+    edges_rep = repair_edges(edges_params, frame, sigma=canny_sig)
+    ax[0].clear()
+    ax[1].clear()
     ax[0].imshow(edges_params)
     ax[1].imshow(edges_rep)
     plt.pause(5)
+
+
+
+def run_shitty():
+    vid_file = '/home/lab/pupil_vids/nick3.avi'
+    # run once we get good params
+    # remake video object to restart from frame 0
+    vid = cv2.VideoCapture(vid_file)
+    total_frames = vid.get(cv2.CAP_PROP_FRAME_COUNT)
+    roi = (725, 529, 523, 334)
+    sig_cutoff = 0.7
+    sig_gain = 10
+    canny_sig = 4.07
+    canny_high = 1.17
+    canny_low = 0.3
+    # pmod = model.Pupil_Model(ix, iy, rad)
+
+    # cv2.namedWindow('run', flags=cv2.WINDOW_NORMAL)
+    # fig, ax = plt.subplots(4,1)
+    thetas = np.linspace(0, np.pi * 2, num=100, endpoint=False)
+    frame_counter = count()
+
+    # frame_params = np.ndarray(shape=(0, 7))
+    x_list = []
+    y_list = []
+    a_list = []
+    b_list = []
+    t_list = []
+    n_list = []
+    v_list = []
+
+    starttime = time()
+    for i in range(100):
+        k = cv2.waitKey(1) & 0xFF
+        if k == ord('\r'):
+            break
+
+        ret, frame_orig = vid.read()
+        if ret == False:
+            break
+
+        n_frame = frame_counter.next()
+        # if n_frame % 10 == 0:
+        #     now = time()
+        #     fps = n_frame / (now - starttime)
+        #     print('frame {} of {}, {} fps'.format(n_frame, total_frames, fps))
+
+        frame = imops.preprocess_image(frame_orig, roi,
+                                       sig_cutoff=sig_cutoff,
+                                       sig_gain=sig_gain)
+
+        # canny edge detection & reshaping coords
+        edges_params = imops.scharr_canny(frame, sigma=canny_sig,
+                                          high_threshold=canny_high, low_threshold=canny_low)
+
+        edges_params = imops.repair_edges(edges_params, frame)
+
+        try:
+            labeled_edges = morphology.label(edges_params)
+        except:
+            continue
+        uq_edges = np.unique(labeled_edges)
+        uq_edges = uq_edges[uq_edges > 0]
+        ellipses = [imops.fit_ellipse(labeled_edges, e) for e in uq_edges]
+        ell_pts = np.ndarray(shape=(0, 2))
+        for e in ellipses:
+            if not e:
+                continue
+            points = e.predict_xy(thetas)
+            points[points < 0] = 0
+            points[points[:, 0] > labeled_edges.shape[1], 0] = labeled_edges.shape[1]
+            points[points[:, 1] > labeled_edges.shape[0], 1] = labeled_edges.shape[0]
+
+            ell_pts = np.concatenate((ell_pts, points), axis=0)
+            ell_params = e.params
+            x_list.append(e.params[0])
+            y_list.append(e.params[1])
+            a_list.append(e.params[2])
+            b_list.append(e.params[3])
+            t_list.append(e.params[4])
+            n_list.append(n_frame)
+            # get mean darkness
+            ell_mask_y, ell_mask_x = draw.ellipse(ell_params[0], ell_params[1], ell_params[2], ell_params[3],
+                                                  shape=(labeled_edges.shape[1], labeled_edges.shape[0]),
+                                                  rotation=ell_params[4])
+
+            v_list.append(np.mean(frame[ell_mask_x, ell_mask_y]))
+
+import cProfile
+
+
+
+cProfile.runctx('run_shitty()', None, locals(), filename='/home/lab/stats4.txt')

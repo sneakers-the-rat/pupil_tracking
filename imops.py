@@ -9,6 +9,7 @@ from itertools import count, cycle
 from sklearn.linear_model import LogisticRegression
 from sklearn.preprocessing import normalize
 import scipy.ndimage as ndi
+from copy import copy
 from scipy.ndimage import (gaussian_filter,
                            generate_binary_structure, binary_erosion, label)
 from matplotlib import pyplot as plt
@@ -139,7 +140,7 @@ def fit_ellipse(edges, which_edge):
 def nothing(x):
     pass
 
-def edge_vectors(frame, sigma=1):
+def edge_vectors(frame, sigma=1, return_angles = False):
     """
     Get the eigenvectors/values of the structural tensor
     (1) https://arxiv.org/pdf/1402.5564.pdf
@@ -157,11 +158,6 @@ def edge_vectors(frame, sigma=1):
 
 
     """
-    #frame = np.flipud(frame)
-
-    #grad_x = filters.sobel_h(frame)
-    #grad_y = filters.sobel_v(frame)
-
     grad_x = filters.gaussian(cv2.Scharr(frame, ddepth=-1, dx=1, dy=0), sigma=sigma)
     grad_y = filters.gaussian(cv2.Scharr(frame, ddepth=-1, dx=0, dy=1), sigma=sigma)
 
@@ -172,20 +168,23 @@ def edge_vectors(frame, sigma=1):
 
     e1 = 0.5 * (Ayy + Axx - np.sqrt((Ayy - Axx) ** 2 + 4 * (Axy ** 2)))
     e2 = 0.5 * (Ayy + Axx + np.sqrt((Ayy - Axx) ** 2 + 4 * (Axy ** 2)))
+    # edges have eigenvalues with high e2 and low e1, so
+    edge_scale = e2 - e1
 
     # norm the vectors
     grads = np.stack((grad_x, grad_y), axis=-1)
     grads = normalize(grads.reshape(-1,2), norm="l2", axis=1).reshape(grads.shape)
     grad_x, grad_y = grads[:,:,0], grads[:,:,1]
 
-    # get angles 0-2pi
-    angle = np.arccos(grad_x)
-    angle[grad_y<=0] = np.arccos(-grad_x[grad_y<=0])+np.pi
+    if return_angles:
+        # get angles 0-2pi
+        angle = np.arccos(grad_x)
+        angle[grad_y<=0] = np.arccos(-grad_x[grad_y<=0])+np.pi
 
-    # edges have eigenvalues with high e2 and low e1, so
-    edge_scale = e2-e1
+        return grad_x, grad_y, edge_scale, angle
 
-    return grad_x, grad_y, angle, edge_scale
+    else:
+        return grad_x, grad_y, edge_scale
 
 def scharr_canny(image, sigma, low_threshold=0.2, high_threshold=0.5):
     # skimage's canny but we get scharr grads instead of sobel,
@@ -315,7 +314,7 @@ def scharr_canny(image, sigma, low_threshold=0.2, high_threshold=0.5):
     return output_mask
 
 
-def repair_edges(edges, grad_x, grad_y, frame):
+def repair_edges(edges, frame, sigma=3):
     # connect contiguous edges, disconnect edges w/ sharp angles
     # expect a binary edge image, like from feature.canny
     # im_grad should be complex (array of vectors)
@@ -323,49 +322,204 @@ def repair_edges(edges, grad_x, grad_y, frame):
     # super inefficient rn, will eventually just work with xy's directly but...
     edges = edges.copy()
 
-
     label_edges = morphology.label(edges)
 
-    uq_edges = np.unique(label_edges)
-    uq_edges = uq_edges[uq_edges>0]
+    uq_edges, counts = np.unique(label_edges, return_counts = True)
+    uq_edges, counts = uq_edges[uq_edges>0], counts[1:]
 
     if len(uq_edges) == 0:
         return
 
     # delete tiny edges
-    for e in uq_edges:
-        edge_xy = edges2xy(label_edges, e, sort=False)
-        if edge_xy.shape[0] < 20:
-            edges[edge_xy[:,0], edge_xy[:,1]] = 0
-            uq_edges = uq_edges[uq_edges!=e]
+    uq_edges = uq_edges[counts > 30]
+    edges[~np.isin(label_edges, uq_edges)] = 0
 
 
-    # first, go through and break edges at corners
-    for e in uq_edges:
-        edge_xy = edges2xy(label_edges, e)
-        if len(edge_xy) == 0:
-            continue
+
+    ##################################
+    # first, go through and break edges at corners and inflection points
+    edges = delete_corners(edges=edges, label_edges=label_edges, uq_edges=uq_edges)
+
+    # delete tiny edges again
+    edges = remove_tiny_edges(edges)
+
+    # filter points that are convex around darkness
+    #edges = positive_convexity(edges, frame)
+
+    # one last time
+    #edges = remove_tiny_edges(edges)
+
+    # reconnect edges based on position, image gradient, and edge affinity
+    edges = merge_curves(edges, frame, sigma=sigma)
+
+    # final round of breaking curves if we introduced any bad ones in our merge
+    #edges = delete_corners(edges=edges)
+
+    return edges
+
+def delete_corners(edges=None,label_edges=None, uq_edges=None):
+    if (edges is None) and (label_edges is None):
+        Exception('Need either edges or labeled edges!')
+
+    if (edges is not None) and (label_edges is None):
+        label_edges =morphology.label(edges)
+        uq_edges = np.unique(label_edges)
+        uq_edges = uq_edges[uq_edges > 0]
+
+    if (label_edges is not None) and (uq_edges is None):
+        edges = label_edges>0
+        uq_edges = np.unique(label_edges)
+        uq_edges = uq_edges[uq_edges > 0]
+
+    if edges is None:
+        edges = label_edges > 0
+
+    edges_xy = [edges2xy(label_edges, e) for e in uq_edges]
+    delete_mask = np.zeros(edges.shape, dtype=np.bool)
+    num = 0
+    for edge_xy in edges_xy:
+        num +=1
         delete_points = break_corners(edge_xy)
 
         # if delete_points gets returned as False, delete this whole segment
         if delete_points == False:
             edges[edge_xy[:,0], edge_xy[:,1]] = 0
         elif len(delete_points)>0:
-            delete_mask = np.zeros(edges.shape, dtype=np.bool)
             for p in delete_points:
                 delete_mask[p[0], p[1]] = True
-            # do a dilation w/ 9-pt square to get all the neighboring points too
-            delete_mask = morphology.binary_dilation(delete_mask, selem=morphology.square(5))
 
-            edges[delete_mask] = 0
+    # do a dilation w/ square to get all the neighboring points too
+    # use 5-diam square so reconnecting doesn't make T's
+    delete_mask = morphology.binary_dilation(delete_mask, selem=morphology.square(5))
+    edges[delete_mask] = 0
+    return edges
 
-    # relabel
+def remove_tiny_edges(edges, thresh=30):
+    label_edges = morphology.label(edges)
+    uq_edges, counts = np.unique(label_edges, return_counts=True)
+    uq_edges, counts = uq_edges[uq_edges > 0], counts[1:]
+    uq_edges = uq_edges[counts > thresh]
+    edges[~np.isin(label_edges, uq_edges)] = 0
+    return edges
+
+def merge_curves(edges, frame, sigma=3, threshold=0.5):
+    '''
+    Given a binary array of edges and a grayscale image,
+    generate three metrics of continuity for corner points (edges of edges):
+        - euclidean distance
+        - cosine distance between image gradient
+        - cosine distance between edge direction & direction to other points
+    merge those above a given threshold
+
+    :param edges:
+    :param frame:
+    :param sigma:
+    :return:
+    '''
+
+    # get edge points
+    label_edges = morphology.label(edges)
+    uq_edges = np.unique(label_edges)
+    uq_edges = uq_edges[uq_edges>0]
+    edges_xy = [edges2xy(label_edges, e) for e in uq_edges]
+    edge_points = np.row_stack([(e[0], e[-1]) for e in edges_xy])
+
+    # image gradients
+    grad_x, grad_y, edge_scale = edge_vectors(frame, sigma=sigma)
+
+    ###################
+    # Continuity metrics
+    ###################
+    ## 1. distance
+
+    # get the  euclidean distances between points as a fraction of image size
+    edge_dists = distance.squareform(distance.pdist(edge_points))/np.max(frame.shape)
+
+    ## 2. gradient similarity
+    # and the dot product of the image gradient
+    edge_grads = np.column_stack((grad_x[edge_points[:,0], edge_points[:,1]],
+                                  grad_y[edge_points[:,0], edge_points[:,1]]))
+    edge_grads = distance.squareform(distance.pdist(edge_grads, "cosine"))
+
+    ## 3. edge affinity
+    # want edges that point at each other
+
+    # get direction of edge points from line segments
+    segs = [prasad_lines(e) for e in edges_xy]
+
+    # 3d array of the edge points and the neighboring segment vertex
+    edge_segs = np.row_stack([((e[0],e[1]),(e[-1],e[-2])) for e in segs])
+
+    # subtract neighboring segment vertex from edge point to get vector pointing
+    # in direction of edge
+    # we also get the midpoints of the last segment,
+    # because pointing towards the actual last point in the segment can be noisy
+    edge_vects = normalize(edge_segs[:,0,:] - edge_segs[:,1,:])
+    edge_mids = np.mean(edge_segs, axis=1)
+
+    # cosine distance between direction of edge at endpoints and direction to other points
+    # note this distance is asymmetrical, affinity from point in row to point in column
+    edge_affinity = np.row_stack(
+        [distance.cdist(edge_vects[i,:].reshape(1,2), edge_mids-edge_points[i,:], "cosine")
+         for i in range(len(edge_segs))]
+    )
+
+    # get upper/lower indices manually so they match up right
+    triu_indices = np.triu_indices(edge_affinity.shape[0], k= 1)
+    tril_indices = triu_indices[::-1]
+
+    # average top and bottom triangles - both edges should point at each other
+    pair_affinity = np.mean((edge_affinity[tril_indices],
+                             edge_affinity[triu_indices]), axis=0)
+    edge_affinity[tril_indices] = pair_affinity
+    edge_affinity[triu_indices] = pair_affinity
+
+    ########################################
+    # Clean up & combine merge metrics
+    # want high values to be good, and for vals to be 0-1
+    edge_dists = 1-((edge_dists-np.min(edge_dists))/(np.max(edge_dists)-np.min(edge_dists)))
+    #edge_dists = 1-edge_dists
+    edge_grads = 1-(edge_grads/2.) # cosine distance is 0-2
+    edge_affinity = 1-(edge_affinity/2.)
+
+    merge_score = edge_dists**6 * edge_grads**2 * edge_affinity**2
+    merge_score[np.isnan(merge_score)] = 0.
+
+    # zero nonmax joins (only want to join each end one time at most..
+    # only keep scores if mutually max'd (avoids 3-way joins)
+    col_max = np.argmax(merge_score, axis=0)
+    dupe_mask = np.ones_like(merge_score, dtype=np.bool)
+    dupe_mask[col_max[col_max], col_max] = 0
+    merge_score[dupe_mask] = 0.
+
+    # now only need triangle to avoid dupes
+    merge_score[triu_indices] = 0.
+
+    # get good edges to merge,
+    # empirically threshold of 0.5 seems to get the visually salient ones
+    merge_points = np.column_stack(np.where(merge_score>threshold))
+
+    # filter points that are on the same curve...
+    merge_points = merge_points[(merge_points/2)[:,0] != (merge_points/2)[:,1],:]
+
+    # and draw them on the edge image
+    for i in range(len(merge_points)):
+        points = np.row_stack((edge_points[merge_points[i,0],:],
+                              edge_points[merge_points[i,1],:]))
+        join_points = line_mask(points)
+        edges[join_points[:,0], join_points[:,1]] = 1
+
+    return edges
+
+def positive_convexity(edges, frame, brightness=True):
+    # filter edges that are convex around darkness (or brightness
+
+    # relabel and delete small edges
     label_edges = morphology.label(edges)
     uq_edges = np.unique(label_edges)
     uq_edges = uq_edges[uq_edges>0]
 
 
-    # filter edges that are convex around darkness
     for e in uq_edges:
         one_edge = label_edges.copy()
         one_edge[one_edge != e] = 0
@@ -379,92 +533,18 @@ def repair_edges(edges, grad_x, grad_y, frame):
         inner_val = np.median(frame[inner_points])
         outer_val = np.median(frame[outer_points])
 
-        if inner_val < outer_val:
-            edge_xy = edges2xy(label_edges, e)
-            edges[edge_xy[:,0], edge_xy[:,1]] = 0
-
-    # relabel
-    label_edges = morphology.label(edges)
-    uq_edges = np.unique(label_edges)
-    uq_edges = uq_edges[uq_edges>0]
-
-    # connect nearby edges with similar gradient vector
-    # one more time get the edges
-    edges_xy = [edges2xy(label_edges, e) for e in uq_edges]
-    edge_points = np.row_stack([(e[0], e[-1]) for e in edges_xy])
-    # get the  euclidean distances between points as a fraction of image size
-    edge_dists = distance.squareform(distance.pdist(edge_points))/np.max(edges.shape)
-
-    # and the dot product of the image gradient
-    edge_grads = np.column_stack((grad_x[edge_points[:,0], edge_points[:,1]],
-                                  grad_y[edge_points[:,0], edge_points[:,1]]))
-    edge_grads = distance.squareform(distance.pdist(edge_grads, "cosine"))
-
-    # and the affinity of the edges
-    # want edges that not only point in opposite directions,
-    # but point at each other
-
-    # get direction of edge points from line segments
-    segs = [prasad_lines(e) for e in edges_xy]
-
-    edge_segs = np.row_stack([((e[0],e[1]),(e[-1],e[-2])) for e in segs])
-    n_endpoints = len(edge_segs)
-    edge_segs = normalize(edge_segs[:,0,:] - edge_segs[:,1,:])
-
-    # cosine distance between direction of edge at endpoints and direction to other points
-    # asymmetrical, affinity from point in row to point in column
-    edge_affinity = np.row_stack(
-        [distance.cdist(edge_segs[i,:].reshape(1,2), edge_points-edge_points[i,:], "cosine")
-         for i in range(len(edge_segs))]
-    )
-
-    # average top and bottom triangles
-    # get upper/lower indices manually so they match up right
-    triu_indices = np.triu_indices(n_endpoints, k= 1)
-    tril_indices = triu_indices[::-1]
-
-    pair_affinity = np.mean((edge_affinity[tril_indices],
-                             edge_affinity[triu_indices]), axis=0)
-    edge_affinity[tril_indices] = pair_affinity
-    edge_affinity[triu_indices] = pair_affinity
-
-    ##
-    # Clean up & combine merge metrics
-    edge_dists = 1-((edge_dists-np.min(edge_dists))/(np.max(edge_dists)-np.min(edge_dists)))
-    edge_grads = 1-(edge_grads/2.) # cosine distance is 0-2
-    edge_affinity = 1-(edge_affinity/2.)
-
-    merge_score = edge_dists**2 * edge_grads**2 * edge_affinity**2
-    merge_score[np.isnan(merge_score)] = 0.
-
-    # zero nonmax joins (only want to join each end one time at most..
-    # only keep scores if mutually max'd (avoids 3-way joins)
-    col_max = np.argmax(merge_score, axis=0)
-    row_max = np.argmax(merge_score, axis=1)
-    dupe_mask = np.ones_like(merge_score, dtype=np.bool)
-    dupe_mask[col_max[col_max], col_max] = 0
-    merge_score[dupe_mask] = 0.
-
-    # now only need triangle
-    merge_score[triu_indices] = 0.
-
-    # get good edges to merge
-    merge_points = np.column_stack(np.where(merge_score>.5))
-
-    # that are not on the same curve
-    merge_points = merge_points[(merge_points/2)[:,0] != (merge_points/2)[:,1],:]
-
-    # and draw them
-    for i in range(len(merge_points)):
-        points = np.row_stack((edge_points[merge_points[i,0],:],
-                              edge_points[merge_points[i,1],:]))
-        join_points = line_mask(points)
-        edges[join_points[:,0], join_points[:,1]] = 1
-
+        if brightness:
+            if inner_val < outer_val:
+                edge_xy = edges2xy(label_edges, e)
+                edges[edge_xy[:,0], edge_xy[:,1]] = 0
+        else:
+            if outer_val < inner_val:
+                edge_xy = edges2xy(label_edges, e)
+                edges[edge_xy[:,0], edge_xy[:,1]] = 0
 
     return edges
 
-def break_corners(edge_xy, return_segments=False, corner_thresh=.8):
+def break_corners(edge_xy, return_segments=False, corner_thresh=.3):
     # pass in an ordered list of x/y coords,
     # using prasad's line estimation we break edges at sharp turns/inflection points
     # returns an array of coords of corners/inflection points to
@@ -484,7 +564,8 @@ def break_corners(edge_xy, return_segments=False, corner_thresh=.8):
     segs = nodes2segs(segs_points)
 
     # get angles between segments
-    angles = []
+    angles = [] # dot product between vectors, tells sharp angles
+    inflection = [] # dot product between n+1 vector and (-y, x) of n vector
     for i in range(len(segs)-1):
         # make segments unit vectors
         seg1, seg2 = segs[i], segs[i+1]
@@ -494,30 +575,29 @@ def break_corners(edge_xy, return_segments=False, corner_thresh=.8):
         # dot product of vector 2 and perp. vector to v1 (x,y)T = (-y,x)
 
 
-        angles.append(-seg_n[0,1]*seg_n[1,0]+seg_n[0,0]*seg_n[1,1])
+        inflection.append(-seg_n[0,1]*seg_n[1,0]+seg_n[0,0]*seg_n[1,1])
+        angles.append(seg_n[0, 0] * seg_n[1, 0] + seg_n[0, 1] * seg_n[1, 1])
 
-    # first thing's first, if we get back a 2 pt segment, or a
-    #  3 point segment with a v sharp angle,
+    # first thing's first, if we get back a 2 pt segment
     # recommend to delete the whole segment by returning False
 
     if len(angles) == 0:
-        return False
-    elif len(angles) == 1 and abs(angles[0])>corner_thresh:
         return False
 
 
     # otherwise go through and find sharp angles and inflection points
     # boolean mask for deletion of points
     delete_pts = np.zeros(len(segs_points), dtype=np.bool)
-    angles = np.array(np.abs(angles))
+    angles = np.array(angles)
+    inflection = np.array(inflection)
 
     # look for sharp edges
-    delete_pts[np.where(angles > corner_thresh)[0] + 1] = True
+    delete_pts[np.where(angles < corner_thresh)[0] + 1] = True
 
     # and inflection points
     # sorry for how this works so sucky, head unclear.
-    signs = np.zeros(len(angles), dtype=np.bool)
-    signs[np.where(angles >= 0)] = True
+    signs = np.zeros(len(inflection), dtype=np.bool)
+    signs[np.where(inflection >= 0)] = True
     last_deleted = False
     for i in range(len(angles)):
         if last_deleted:
@@ -609,7 +689,7 @@ def order_points(edge_points):
     while True:
         # get dict of connected points and distances
         # filtered by whether the index hasn't been added yet
-        connected_pts = {k: dists[pt_i,k] for k in np.where(dists[pt_i,:])[0] if k in inds}
+        connected_pts = [k for k in np.where(dists[pt_i, :])[0] if k in inds]
 
         # if we get nothing, we're either done or we have to go back to the first pt
         if len(connected_pts) == 0:
@@ -624,13 +704,150 @@ def order_points(edge_points):
                 break
 
         # find point with min distance (take horiz/vert points before diags)
-        pt_i = min(connected_pts, key=connected_pts.get)
+        pt_i = connected_pts[np.argmax([dists[pt_i, k] for k in connected_pts])]
         if forwards:
             new_pts.append(edge_points[inds.pop(inds.index(pt_i))])
         else:
             new_pts.appendleft(edge_points[inds.pop(inds.index(pt_i))])
 
     return np.array(new_pts)
+
+def order_points_new(edge_points):
+    # convert edge masks to ordered x-y coords
+
+    if isinstance(edge_points, list):
+        edge_points = np.array(edge_points)
+
+    if edge_points.shape[1] > 2:
+        # starting w/ imagelike thing, get the points
+        edge_points = np.column_stack(np.where(edge_points))
+
+    dists = distance.squareform(distance.pdist(edge_points))
+    # make binary connectedness graph, max dist is ~1.4 for diagonal pix
+    # convert to 3 and 2 so singly-connected points are always <4
+    dists[dists > 1.5] = 0
+    dists[dists >1]    = 3
+    dists[dists == 1]  = 2
+
+    # check if we have easy edges
+    dists_sum = np.sum(dists, axis=1)
+
+    ends = np.where(dists_sum<4)[0]
+    if len(ends)>0:
+        pt_i = ends[0]
+        first_i = ends[0]
+        got_end = True
+    else:
+        # otherwise just start at the beginning
+        pt_i = 0
+        first_i = 0
+        got_end = False
+
+    # walk through our dist graph, gathering points as we go
+    inds = range(len(edge_points))
+    new_pts = dq()
+    forwards = True
+    # this confusing bundle will get reused a bit...
+    # we are making a new list of points, and don't want to double-count points
+    # but we can't pop from edge_points directly, because then the indices from the
+    # dist mat will be wrong. Instead we make a list of all the indices and pop
+    # from that. But since popping will change the index/value parity, we
+    # have to double index inds.pop(inds.index(etc.))
+
+    new_pts.append(edge_points[inds.pop(inds.index(pt_i))])
+    while True:
+        # get dict of connected points and distances
+        # filtered by whether the index hasn't been added yet
+        #connected_pts = {k: dists[pt_i,k] for k in np.where(dists[pt_i,:])[0] if k in inds}
+        connected_pts = [k for k in np.where(dists[pt_i, :])[0] if k in inds]
+
+        # if we get one, cool. just append
+        if len(connected_pts) == 1:
+            #pt_i = connected_pts.keys()[0]
+            pt_i = connected_pts[0]
+            if forwards:
+                new_pts.append(edge_points[inds.pop(inds.index(pt_i))])
+            else:
+                new_pts.appendleft(edge_points[inds.pop(inds.index(pt_i))])
+
+        # if we get more than one, find the longest one
+        if len(connected_pts) > 1:
+            chains = {}
+            chain_inds = {}
+            last_pts = {}
+            # recursively call walk_points
+            for k in connected_pts:
+                chains[k], chain_inds[k], last_pts[k] = walk_points(dists, edge_points, k, inds)
+            longest_chain = max(chains.items(), key=lambda x: len(x[1]))[0]
+            if forwards:
+                new_pts.extend(chains[longest_chain])
+            else:
+                new_pts.extendleft(chains[longest_chain])
+            inds = chain_inds[longest_chain]
+            pt_i = last_pts[longest_chain]
+
+            if (len(inds)>0) and not got_end:
+                # still have the other side to doooooo
+                pt_i = first_i
+                forwards = False
+                got_end = False
+                continue
+            else:
+                break
+
+        # if we get nothing, we're either done or we have to go back to the first pt
+        if len(connected_pts) == 0:
+            if got_end:
+                # still have points left, go back to first and go backwards
+                pt_i = first_i
+                forwards = False
+                got_end = False
+                continue
+            else:
+                # got to the end lets get outta here
+                break
+
+        # find point with min distance (take horiz/vert points before diags)
+        #pt_i = min(connected_pts, key=connected_pts.get)
+
+
+    return np.array(new_pts)
+
+def walk_points(dists,edge_points, pt_i, inds):
+    pt_i = copy(pt_i)
+    inds = copy(inds)
+    new_pts = []
+    new_pts.append(edge_points[inds.pop(inds.index(pt_i))])
+    while True:
+        # get dict of connected points and distances
+        # filtered by whether the index hasn't been added yet
+        try:
+            connected_pts = [k for k in np.where(dists[pt_i,:])[0] if k in inds]
+        except ValueError:
+            connected_pts = [k for k in np.where(dists[pt_i, :]) if k in inds]
+
+        # if we get nothing, we're done
+        if len(connected_pts) == 0:
+            break
+
+        # find point with min distance (take horiz/vert points before diags)
+        if len(connected_pts) == 1:
+            pt_i = connected_pts[0]
+            new_pts.append(edge_points[inds.pop(inds.index(pt_i))])
+
+        if len(connected_pts) > 1:
+            chains = {}
+            chain_inds = {}
+            last_pts = {}
+            for k in connected_pts:
+                chains[k], chain_inds[k], last_pts[k] = walk_points(dists, edge_points, k, inds)
+            longest_chain = max(chains.items(), key=lambda x: len(x[1]))[0]
+            new_pts.extend(chains[longest_chain])
+            inds = chain_inds[longest_chain]
+            pt_i = last_pts[longest_chain]
+
+    return new_pts, inds, pt_i
+
 
 
 def prasad_lines(edge, return_metrics=False):
@@ -656,16 +873,24 @@ def prasad_lines(edge, return_metrics=False):
 
     while first<last:
 
-        mdev_results = prasad_maxlinedev(x[first:last], y[first:last], return_metrics=return_metrics)
+        mdev_results = prasad_maxlinedev(x[first:last+1], y[first:last+1], return_metrics=return_metrics)
 
         while mdev_results['d_max'] > mdev_results['del_tol_max']:
-            last = mdev_results['index_d_max']+first
-            if last == first+1:
+            if mdev_results['index_d_max']+first == last:
+                last = len(x)-1
                 break
+            else:
+                last = mdev_results['index_d_max']+first
+
+            if (last == first+1) or (last==first):
+                last = len(x)-1
+                break
+
             try:
-                mdev_results = prasad_maxlinedev(x[first:last], y[first:last], return_metrics=return_metrics)
+                mdev_results = prasad_maxlinedev(x[first:last+1], y[first:last+1], return_metrics=return_metrics)
             except IndexError:
                 break
+
         seglist.append([x[last], y[last]])
         if return_metrics:
             precision.append(mdev_results['precision'])
