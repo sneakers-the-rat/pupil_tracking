@@ -4,131 +4,122 @@ from scipy.spatial.distance import euclidean
 from skimage import feature, morphology, img_as_float, draw
 from itertools import count
 from time import time
+import argparse
+import Tkinter as tk, tkFileDialog
+import os
+from datetime import datetime
+import json
+import multiprocessing as mp
+from tqdm import tqdm
 
 
 import imops
+import runops
 import model
-
-def draw_circle(event,x,y,flags,param):
-    # Draw a circle on the frame to outline the pupil
-    global ix,iy,drawing,rad,frame_pupil
-    if event == cv2.EVENT_LBUTTONDOWN:
-        drawing = True
-        ix,iy = x,y
-    elif event == cv2.EVENT_MOUSEMOVE:
-        if drawing == True:
-            rad = np.round(euclidean([ix,iy], [x,y])).astype(np.int)
-            cv2.circle(frame_pupil,(ix,iy),rad,(255,255,255),-1)
-    elif event == cv2.EVENT_LBUTTONUP:
-        drawing = False
-        cv2.circle(frame_pupil,(ix,iy),rad,(255,255,255),-1)
 
 ##############################
 # Initialization
-# TODO: Ask for file, list of files
+# Argument parser
 
-vid_file = '/home/lab/pupil_vids/nick3.avi'
-vid = cv2.VideoCapture(vid_file)
+pars = argparse.ArgumentParser()
+pars.add_argument("--dir", help="Base directory for videos")
+pars.add_argument("--n_procs", help="Number of processes to spawn")
+
+###############
+args = pars.parse_args()
+
+if args.dir:
+    base_dir = args.dir
+else:
+    base_dir = os.sep
+
+if args.n_procs:
+    try:
+        n_procs = int(args.n_procs)
+
+    except TypeError:
+        SyntaxWarning("n_procs must be an integer, resorting to 1")
+        n_procs = 1
+else:
+    n_procs = 1
+
+###############
+# Get Files
+
+# hide tk root window
+# https://stackoverflow.com/a/14119223
+
+#root = tk.Tk()
+#root.withdraw()
+
+#files = tkFileDialog.askopenfilenames(parent=root, title="Select Input Videos", initialdir=base_dir)
+
+# create file to save params
+param_dir = os.path.join(os.path.expanduser("~"), "pupil_stuff")
+
+p_name = raw_input("What to call this batch of videos?")
+p_name = p_name.strip().strip('/').lower().replace(" ", "_")
+p_name = "_".join([p_name, datetime.now().strftime("%y-%m-%d-%H%M")])
+param_fn = os.sep.join([param_dir, p_name + ".json"])
+
+if not os.path.exists(param_dir):
+    try:
+        os.makedirs(param_dir, mode=0774)
+
+    except OSError:
+        RuntimeWarning("Couldn't make param save directory, proceeding w/o saving")
+        param_fn = None
+
+
+
+###############################
+# Get initial ROI and image preprocessing params
+
+files=['/Users/jonny/pupil_vids/nick3.avi']
+vid_fn = files[0]
+vid = cv2.VideoCapture(vid_fn)
+
+# crop roi
+roi, frame = runops.get_crop_roi(vid)
 ret, frame = vid.read()
-frame_orig = frame.copy()
-frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-
-# Get ROIs - cropping & pupil center
-roi = cv2.selectROI(frame)
+frame = frame_orig = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 frame = imops.crop(frame, roi)
-cv2.destroyAllWindows()
 
-# Select pupil
+# draw pupil (sry its circular)
+ix, iy, rad = runops.draw_pupil(frame)
 
-global drawing, ix, iy, rad, frame_pupil
-frame_pupil = frame.copy()
-drawing = False # true if mouse is pressed
-ix,iy,rad = -1,-1,5 # global vars where we'll store x/y pos & radius
-cv2.namedWindow('pupil')
-cv2.setMouseCallback('pupil', draw_circle)
-while True:
-    cv2.imshow('pupil',frame_pupil)
-    k = cv2.waitKey(1) & 0xFF
-    if k == ord('q'):
-        frame_pupil = frame.copy()
-    elif k == ord('\r'):
-        break
-cv2.destroyAllWindows()
+# adjust preprocessing params
+params = runops.set_params(vid, roi)
 
+# collect & save run parameters
+params['mask'] = {'x':ix, 'y':iy, 'r':rad}
+params['files'] = files
+params['n_procs'] = n_procs
+params['roi'] = roi
 
+with open(param_fn, 'w') as param_file:
+    json.dump(params, param_file)
 
-# Adjust preprocessing parameters
-## Initial values -- have to use ints, we'll convert back later
-frame_params = imops.preprocess_image(frame_orig, roi)
-edges_params = imops.scharr_canny(frame_params, sigma=3)
+##################################
+# run
 
-sig_cutoff = 50
-sig_gain = 5
-canny_sig  = 200
-canny_high = 50
-canny_low  = 10
-
-cv2.namedWindow('params', flags=cv2.WINDOW_NORMAL)
-cv2.createTrackbar('Sigmoid Cutoff', 'params', sig_cutoff, 100, imops.nothing)
-cv2.createTrackbar('Sigmoid Gain', 'params', sig_gain, 20, imops.nothing)
-cv2.createTrackbar('Gaussian Blur', 'params', canny_sig, 700, imops.nothing)
-cv2.createTrackbar('Canny High Threshold', 'params', canny_high, 300, imops.nothing)
-cv2.createTrackbar('Canny Low Threshold', 'params', canny_low, 300, imops.nothing)
-
-while True:
-    k = cv2.waitKey(1) & 0xFF
-    if k == ord('\r'):
-        break
-
-    ret, frame_orig = vid.read()
-
-    sig_cutoff = cv2.getTrackbarPos('Sigmoid Cutoff', 'params')
-    sig_gain = cv2.getTrackbarPos('Sigmoid Gain', 'params')
-    canny_sig = cv2.getTrackbarPos('Gaussian Blur', 'params')
-    canny_high = cv2.getTrackbarPos('Canny High Threshold', 'params')
-    canny_low = cv2.getTrackbarPos('Canny Low Threshold', 'params')
-
-    sig_cutoff = sig_cutoff/100.
-    canny_sig = canny_sig/100.
-    canny_high = canny_high/100.
-    canny_low  = canny_low/100.
-
-    frame = imops.preprocess_image(frame_orig, roi,
-                                   sig_cutoff=sig_cutoff,
-                                   sig_gain=sig_gain)
-    edges_params = imops.scharr_canny(frame, sigma=canny_sig,
-                                      high_threshold=canny_high, low_threshold=canny_low)
-
-    frame_orig = cv2.cvtColor(frame_orig, cv2.COLOR_BGR2GRAY)
-    frame_orig = imops.crop(frame_orig, roi)
-    frame_orig = img_as_float(frame_orig)
-
-
-    cv2.imshow('params', np.vstack([frame_orig, frame, edges_params]))
-cv2.destroyAllWindows()
+batch_size = 200 # frames
 
 # run once we get good params
 # remake video object to restart from frame 0
-vid = cv2.VideoCapture(vid_file)
+vid = cv2.VideoCapture(vid_fn)
 total_frames = vid.get(cv2.CAP_PROP_FRAME_COUNT)
-#pmod = model.Pupil_Model(ix, iy, rad)
-
-#cv2.namedWindow('run', flags=cv2.WINDOW_NORMAL)
-#fig, ax = plt.subplots(4,1)
-thetas = np.linspace(0, np.pi*2, num=100, endpoint=False)
+#thetas = np.linspace(0, np.pi*2, num=100, endpoint=False)
 frame_counter = count()
+batch_counter = count()
 
-#frame_params = np.ndarray(shape=(0, 7))
-x_list = []
-y_list = []
-a_list = []
-b_list = []
-t_list = []
-n_list = []
-v_list = []
+pool = mp.Pool(processes=n_procs)
+pbar = tqdm(total=total_frames, position=0)
+batch_frames = np.ndarray((frame.shape[0], frame.shape[1], batch_size), dtype=np.uint8)
+params_frames = []
+results = []
 
-starttime = time()
-while True:
+for i in xrange(501):
     k = cv2.waitKey(1) & 0xFF
     if k == ord('\r'):
         break
@@ -137,66 +128,26 @@ while True:
     if ret == False:
         break
 
+
     n_frame = frame_counter.next()
-    if n_frame % 10 == 0:
-        now = time()
-        fps = n_frame/(now-starttime)
-        print('frame {} of {}, {} fps'.format(n_frame, total_frames, fps))
+    pbar.update()
+    frame_orig = cv2.cvtColor(frame_orig, cv2.COLOR_BGR2GRAY)
+    frame_orig = imops.crop(frame_orig, roi)
+    batch_frames[:, :, n_frame%batch_size] = frame_orig
+
+    if n_frame % batch_size == 0:
+        batch_number = batch_counter.next()
+        results.append(pool.apply_async(runops.process_frames, args=(batch_frames.copy(), params, batch_number)))
+        batch_frames = np.ndarray((frame.shape[0], frame.shape[1], batch_size), dtype=np.uint8)
+        print(len(params_frames))
 
 
-    frame = imops.preprocess_image(frame_orig, roi,
-                                   sig_cutoff=sig_cutoff,
-                                   sig_gain=sig_gain)
 
-    # canny edge detection & reshaping coords
-    edges_params = imops.scharr_canny(frame, sigma=canny_sig,
-                                      high_threshold=canny_high, low_threshold=canny_low)
+params_frames = [job.get() for job in results]
+pool.close()
+pool.join()
 
-    edges_params = imops.repair_edges(edges_params, frame)
-
-    try:
-        labeled_edges = morphology.label(edges_params)
-    except:
-        continue
-    uq_edges = np.unique(labeled_edges)
-    uq_edges = uq_edges[uq_edges>0]
-    ellipses = [imops.fit_ellipse(labeled_edges, e) for e in uq_edges]
-    ell_pts = np.ndarray(shape=(0,2))
-    for e in ellipses:
-        if not e:
-            continue
-        points = e.predict_xy(thetas)
-        points[points<0] = 0
-        points[points[:,0]>labeled_edges.shape[1],0] = labeled_edges.shape[1]
-        points[points[:,1]>labeled_edges.shape[0],1] = labeled_edges.shape[0]
-
-        ell_pts = np.concatenate((ell_pts, points), axis=0)
-        ell_params = e.params
-        x_list.append(e.params[0])
-        y_list.append(e.params[1])
-        a_list.append(e.params[2])
-        b_list.append(e.params[3])
-        t_list.append(e.params[4])
-        n_list.append(n_frame)
-        # get mean darkness
-        ell_mask_y, ell_mask_x = draw.ellipse(ell_params[0], ell_params[1], ell_params[2], ell_params[3],
-                                shape=(labeled_edges.shape[1], labeled_edges.shape[0]), rotation=ell_params[4])
-
-        v_list.append(np.mean(frame[ell_mask_x, ell_mask_y]))
-
-    # draw points on the images
-    #ell_pts = ell_pts.astype(np.int)
-    #frame_orig = imops.crop(frame_orig, roi)
-    #frame_orig = img_as_float(frame_orig)
-
-    # make other images color
-    #edges_params_c = np.repeat(edges_params[:,:,np.newaxis], 3, axis=2)
-
-    # draw circle, have to flip x/y coords again...
-    #draw.set_color(frame_orig, (ell_pts[:,1], ell_pts[:,0]), (0,0,255))
-    #draw.set_color(edges_params_c, (ell_pts[:,1], ell_pts[:,0]), (0, 0, 1))
-
-    #cv2.imshow('run', np.vstack([frame_orig, edges_params_c]))
+print(params_frames)
 
 
 

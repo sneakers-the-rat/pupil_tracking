@@ -90,8 +90,8 @@ def edges2xy(edges, which_edge=None, sort=True):
 
 
 def preprocess_image(img, roi, gauss_sig=None, logistic=None, sig_cutoff=None, sig_gain=None):
-    img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    img = crop(img, roi)
+    #img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    #img = crop(img, roi)
     img = invert_color(img)
 
     img = exposure.equalize_hist(img)
