@@ -2,7 +2,6 @@
 <project version="4">
   <component name="ChangeListManager">
     <list default="true" id="01616ac4-1005-4ddd-ab35-bd25ea637251" name="Default" comment="">
-      <change type="MOVED" beforePath="$PROJECT_DIR$/imutils.py" afterPath="$PROJECT_DIR$/imops.py" />
       <change type="MODIFICATION" beforePath="$PROJECT_DIR$/.idea/misc.xml" afterPath="$PROJECT_DIR$/.idea/misc.xml" />
       <change type="MODIFICATION" beforePath="$PROJECT_DIR$/.idea/pupil_tracking.iml" afterPath="$PROJECT_DIR$/.idea/pupil_tracking.iml" />
       <change type="MODIFICATION" beforePath="$PROJECT_DIR$/.idea/workspace.xml" afterPath="$PROJECT_DIR$/.idea/workspace.xml" />
@@ -21,69 +20,98 @@
   </component>
   <component name="ExecutionTargetManager" SELECTED_TARGET="default_target" />
   <component name="FileEditorManager">
-    <leaf SIDE_TABS_SIZE_LIMIT_KEY="300">
-      <file leaf-file-name="main.py" pinned="false" current-in-tab="true">
-        <entry file="file://$PROJECT_DIR$/main.py">
-          <provider selected="true" editor-type-id="text-editor">
-            <state relative-caret-position="213">
-              <caret line="174" column="19" lean-forward="false" selection-start-line="174" selection-start-column="19" selection-end-line="174" selection-end-column="19" />
-              <folding>
-                <element signature="e#0#18#0" expanded="true" />
-              </folding>
-            </state>
-          </provider>
-        </entry>
-      </file>
-      <file leaf-file-name="model.py" pinned="false" current-in-tab="false">
-        <entry file="file://$PROJECT_DIR$/model.py">
-          <provider selected="true" editor-type-id="text-editor">
-            <state relative-caret-position="618">
-              <caret line="422" column="8" lean-forward="false" selection-start-line="422" selection-start-column="8" selection-end-line="422" selection-end-column="67" />
-              <folding>
-                <element signature="e#0#18#0" expanded="true" />
-              </folding>
-            </state>
-          </provider>
-        </entry>
-      </file>
-      <file leaf-file-name="imops.py" pinned="false" current-in-tab="false">
-        <entry file="file://$PROJECT_DIR$/imops.py">
-          <provider selected="true" editor-type-id="text-editor">
-            <state relative-caret-position="3307">
-              <caret line="465" column="0" lean-forward="true" selection-start-line="316" selection-start-column="0" selection-end-line="465" selection-end-column="0" />
-              <folding>
-                <element signature="e#0#18#0" expanded="true" />
-                <element signature="e#6055#10754#0" expanded="false" />
-              </folding>
-            </state>
-          </provider>
-        </entry>
-      </file>
-      <file leaf-file-name="fitutils.py" pinned="false" current-in-tab="false">
-        <entry file="file://$PROJECT_DIR$/fitutils.py">
-          <provider selected="true" editor-type-id="text-editor">
-            <state relative-caret-position="311">
-              <caret line="194" column="0" lean-forward="false" selection-start-line="194" selection-start-column="0" selection-end-line="194" selection-end-column="0" />
-              <folding>
-                <element signature="e#0#19#0" expanded="true" />
-              </folding>
-            </state>
-          </provider>
-        </entry>
-      </file>
-      <file leaf-file-name="scratch.py" pinned="false" current-in-tab="false">
-        <entry file="file://$PROJECT_DIR$/scratch.py">
-          <provider selected="true" editor-type-id="text-editor">
-            <state relative-caret-position="101">
-              <caret line="435" column="0" lean-forward="false" selection-start-line="435" selection-start-column="0" selection-end-line="444" selection-end-column="27" />
-              <folding>
-                <element signature="e#0#25#0" expanded="true" />
-              </folding>
-            </state>
-          </provider>
-        </entry>
-      </file>
-    </leaf>
+    <splitter split-orientation="horizontal" split-proportion="0.45810056">
+      <split-first>
+        <leaf SIDE_TABS_SIZE_LIMIT_KEY="300">
+          <file leaf-file-name="runops.py" pinned="false" current-in-tab="false">
+            <entry file="file://$PROJECT_DIR$/runops.py">
+              <provider selected="true" editor-type-id="text-editor">
+                <state relative-caret-position="2625">
+                  <caret line="185" column="0" lean-forward="false" selection-start-line="163" selection-start-column="0" selection-end-line="185" selection-end-column="0" />
+                  <folding>
+                    <element signature="e#0#18#0" expanded="true" />
+                  </folding>
+                </state>
+              </provider>
+            </entry>
+          </file>
+          <file leaf-file-name="model.py" pinned="false" current-in-tab="false">
+            <entry file="file://$PROJECT_DIR$/model.py">
+              <provider selected="true" editor-type-id="text-editor">
+                <state relative-caret-position="6240">
+                  <caret line="422" column="8" lean-forward="false" selection-start-line="422" selection-start-column="8" selection-end-line="422" selection-end-column="67" />
+                  <folding>
+                    <element signature="e#0#18#0" expanded="true" />
+                  </folding>
+                </state>
+              </provider>
+            </entry>
+          </file>
+          <file leaf-file-name="imops.py" pinned="false" current-in-tab="false">
+            <entry file="file://$PROJECT_DIR$/imops.py">
+              <provider selected="true" editor-type-id="text-editor">
+                <state relative-caret-position="1185">
+                  <caret line="93" column="25" lean-forward="false" selection-start-line="93" selection-start-column="25" selection-end-line="93" selection-end-column="25" />
+                  <folding />
+                </state>
+              </provider>
+            </entry>
+          </file>
+          <file leaf-file-name="fitutils.py" pinned="false" current-in-tab="false">
+            <entry file="file://$PROJECT_DIR$/fitutils.py">
+              <provider selected="true" editor-type-id="text-editor">
+                <state relative-caret-position="105">
+                  <caret line="15" column="40" lean-forward="false" selection-start-line="15" selection-start-column="40" selection-end-line="15" selection-end-column="40" />
+                  <folding>
+                    <element signature="e#0#19#0" expanded="true" />
+                  </folding>
+                </state>
+              </provider>
+            </entry>
+          </file>
+          <file leaf-file-name="scratch.py" pinned="false" current-in-tab="true">
+            <entry file="file://$PROJECT_DIR$/scratch.py">
+              <provider selected="true" editor-type-id="text-editor">
+                <state relative-caret-position="240">
+                  <caret line="419" column="33" lean-forward="false" selection-start-line="379" selection-start-column="0" selection-end-line="419" selection-end-column="33" />
+                  <folding>
+                    <element signature="e#0#25#0" expanded="true" />
+                  </folding>
+                </state>
+              </provider>
+            </entry>
+          </file>
+        </leaf>
+      </split-first>
+      <split-second>
+        <leaf SIDE_TABS_SIZE_LIMIT_KEY="300">
+          <file leaf-file-name="runops.py" pinned="false" current-in-tab="false">
+            <entry file="file://$PROJECT_DIR$/runops.py">
+              <provider selected="true" editor-type-id="text-editor">
+                <state relative-caret-position="2190">
+                  <caret line="146" column="50" lean-forward="false" selection-start-line="146" selection-start-column="50" selection-end-line="146" selection-end-column="50" />
+                  <folding>
+                    <element signature="e#0#18#0" expanded="true" />
+                  </folding>
+                </state>
+              </provider>
+            </entry>
+          </file>
+          <file leaf-file-name="main.py" pinned="false" current-in-tab="true">
+            <entry file="file://$PROJECT_DIR$/main.py">
+              <provider selected="true" editor-type-id="text-editor">
+                <state relative-caret-position="437">
+                  <caret line="130" column="15" lean-forward="false" selection-start-line="130" selection-start-column="15" selection-end-line="130" selection-end-column="15" />
+                  <folding>
+                    <element signature="e#0#18#0" expanded="true" />
+                  </folding>
+                </state>
+              </provider>
+            </entry>
+          </file>
+        </leaf>
+      </split-second>
+    </splitter>
   </component>
   <component name="FileTemplateManagerImpl">
     <option name="RECENT_TEMPLATES">
@@ -132,16 +160,16 @@
         <option value="$PROJECT_DIR$/model.py" />
         <option value="$PROJECT_DIR$/fitutils.py" />
         <option value="$PROJECT_DIR$/imutils.py" />
-        <option value="$PROJECT_DIR$/scratch.py" />
         <option value="$PROJECT_DIR$/imops.py" />
+        <option value="$PROJECT_DIR$/runops.py" />
         <option value="$PROJECT_DIR$/main.py" />
+        <option value="$PROJECT_DIR$/scratch.py" />
       </list>
     </option>
   </component>
   <component name="ProjectFrameBounds">
-    <option name="x" value="720" />
     <option name="y" value="22" />
-    <option name="width" value="720" />
+    <option name="width" value="1440" />
     <option name="height" value="874" />
   </component>
   <component name="ProjectLevelVcsManager">
@@ -176,8 +204,8 @@
           </PATH>
         </subPane>
       </pane>
-      <pane id="Scratches" />
       <pane id="Scope" />
+      <pane id="Scratches" />
     </panes>
   </component>
   <component name="PropertiesComponent">
@@ -391,19 +419,33 @@
       <option name="project" value="LOCAL" />
       <updated>1521689451449</updated>
     </task>
-    <option name="localTasksCounter" value="7" />
+    <task id="LOCAL-00007" summary="edge repair &lt;3">
+      <created>1522046751760</created>
+      <option name="number" value="00007" />
+      <option name="presentableId" value="LOCAL-00007" />
+      <option name="project" value="LOCAL" />
+      <updated>1522046751761</updated>
+    </task>
+    <task id="LOCAL-00008" summary="fumbling hopelessly with multiprocessing">
+      <created>1522141860568</created>
+      <option name="number" value="00008" />
+      <option name="presentableId" value="LOCAL-00008" />
+      <option name="project" value="LOCAL" />
+      <updated>1522141860568</updated>
+    </task>
+    <option name="localTasksCounter" value="9" />
     <servers />
   </component>
   <component name="ToolWindowManager">
-    <frame x="720" y="22" width="720" height="874" extended-state="0" />
+    <frame x="0" y="22" width="1440" height="874" extended-state="6" />
     <editor active="true" />
     <layout>
-      <window_info id="Project" active="false" anchor="left" auto_hide="false" internal_type="DOCKED" type="DOCKED" visible="true" show_stripe_button="true" weight="0.072222225" sideWeight="0.5" order="0" side_tool="false" content_ui="combo" />
+      <window_info id="Project" active="false" anchor="left" auto_hide="false" internal_type="DOCKED" type="DOCKED" visible="true" show_stripe_button="true" weight="0.10972222" sideWeight="0.5" order="0" side_tool="false" content_ui="combo" />
       <window_info id="TODO" active="false" anchor="bottom" auto_hide="false" internal_type="DOCKED" type="DOCKED" visible="false" show_stripe_button="true" weight="0.33" sideWeight="0.5" order="6" side_tool="false" content_ui="tabs" />
       <window_info id="Event Log" active="false" anchor="bottom" auto_hide="false" internal_type="DOCKED" type="DOCKED" visible="false" show_stripe_button="true" weight="0.2238724" sideWeight="0.16111112" order="7" side_tool="true" content_ui="tabs" />
       <window_info id="Run" active="false" anchor="bottom" auto_hide="false" internal_type="DOCKED" type="DOCKED" visible="false" show_stripe_button="true" weight="0.33" sideWeight="0.5" order="2" side_tool="false" content_ui="tabs" />
       <window_info id="Version Control" active="false" anchor="bottom" auto_hide="false" internal_type="DOCKED" type="DOCKED" visible="false" show_stripe_button="true" weight="0.33" sideWeight="0.5" order="7" side_tool="false" content_ui="tabs" />
-      <window_info id="Python Console" active="false" anchor="bottom" auto_hide="false" internal_type="DOCKED" type="DOCKED" visible="true" show_stripe_button="true" weight="0.51180124" sideWeight="0.8388889" order="7" side_tool="false" content_ui="tabs" />
+      <window_info id="Python Console" active="false" anchor="bottom" auto_hide="false" internal_type="DOCKED" type="DOCKED" visible="true" show_stripe_button="true" weight="0.3552795" sideWeight="0.8388889" order="7" side_tool="false" content_ui="tabs" />
       <window_info id="Structure" active="false" anchor="left" auto_hide="false" internal_type="DOCKED" type="DOCKED" visible="false" show_stripe_button="true" weight="0.25" sideWeight="0.5" order="1" side_tool="false" content_ui="tabs" />
       <window_info id="Terminal" active="false" anchor="bottom" auto_hide="false" internal_type="DOCKED" type="DOCKED" visible="false" show_stripe_button="true" weight="0.33" sideWeight="0.5" order="7" side_tool="false" content_ui="tabs" />
       <window_info id="Debug" active="false" anchor="bottom" auto_hide="false" internal_type="DOCKED" type="DOCKED" visible="false" show_stripe_button="true" weight="0.39988875" sideWeight="0.85335857" order="3" side_tool="false" content_ui="tabs" />
@@ -428,7 +470,9 @@
     <MESSAGE value="a proper angle measurement" />
     <MESSAGE value="committing to get new scratches elsewhere" />
     <MESSAGE value="p well working all-ellipse estimation, working on adapting DK prasad's method for improving curves" />
-    <option name="LAST_COMMIT_MESSAGE" value="p well working all-ellipse estimation, working on adapting DK prasad's method for improving curves" />
+    <MESSAGE value="edge repair &lt;3" />
+    <MESSAGE value="fumbling hopelessly with multiprocessing" />
+    <option name="LAST_COMMIT_MESSAGE" value="fumbling hopelessly with multiprocessing" />
   </component>
   <component name="XDebuggerManager">
     <breakpoint-manager>
@@ -449,6 +493,92 @@
     <watches-manager />
   </component>
   <component name="editorHistoryManager">
+    <entry file="file://$PROJECT_DIR$/model.py">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="6240">
+          <caret line="422" column="8" lean-forward="false" selection-start-line="422" selection-start-column="8" selection-end-line="422" selection-end-column="67" />
+          <folding>
+            <element signature="e#0#18#0" expanded="true" />
+          </folding>
+        </state>
+      </provider>
+    </entry>
+    <entry file="file://$PROJECT_DIR$/imops.py">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="1395">
+          <caret line="93" column="25" lean-forward="true" selection-start-line="93" selection-start-column="25" selection-end-line="93" selection-end-column="25" />
+          <folding />
+        </state>
+      </provider>
+    </entry>
+    <entry file="file://$PROJECT_DIR$/fitutils.py">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="30">
+          <caret line="10" column="70" lean-forward="false" selection-start-line="10" selection-start-column="16" selection-end-line="10" selection-end-column="70" />
+          <folding>
+            <element signature="e#0#19#0" expanded="true" />
+          </folding>
+        </state>
+      </provider>
+    </entry>
+    <entry file="file://$PROJECT_DIR$/scratch.py">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="6360">
+          <caret line="446" column="0" lean-forward="false" selection-start-line="446" selection-start-column="0" selection-end-line="446" selection-end-column="0" />
+          <folding>
+            <element signature="e#0#25#0" expanded="true" />
+          </folding>
+        </state>
+      </provider>
+    </entry>
+    <entry file="file://$PROJECT_DIR$/main.py">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="0">
+          <caret line="0" column="0" lean-forward="false" selection-start-line="0" selection-start-column="0" selection-end-line="0" selection-end-column="0" />
+          <folding>
+            <element signature="e#0#18#0" expanded="true" />
+          </folding>
+        </state>
+      </provider>
+    </entry>
+    <entry file="file://$PROJECT_DIR$/model.py">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="6240">
+          <caret line="422" column="8" lean-forward="false" selection-start-line="422" selection-start-column="8" selection-end-line="422" selection-end-column="67" />
+          <folding>
+            <element signature="e#0#18#0" expanded="true" />
+          </folding>
+        </state>
+      </provider>
+    </entry>
+    <entry file="file://$PROJECT_DIR$/imops.py">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="5100">
+          <caret line="465" column="0" lean-forward="true" selection-start-line="316" selection-start-column="0" selection-end-line="465" selection-end-column="0" />
+          <folding />
+        </state>
+      </provider>
+    </entry>
+    <entry file="file://$PROJECT_DIR$/fitutils.py">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="2790">
+          <caret line="194" column="0" lean-forward="false" selection-start-line="194" selection-start-column="0" selection-end-line="194" selection-end-column="0" />
+          <folding>
+            <element signature="e#0#19#0" expanded="true" />
+          </folding>
+        </state>
+      </provider>
+    </entry>
+    <entry file="file://$PROJECT_DIR$/scratch.py">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="6360">
+          <caret line="435" column="0" lean-forward="false" selection-start-line="435" selection-start-column="0" selection-end-line="444" selection-end-column="27" />
+          <folding>
+            <element signature="e#0#25#0" expanded="true" />
+          </folding>
+        </state>
+      </provider>
+    </entry>
     <entry file="file://$PROJECT_DIR$/main.py">
       <provider selected="true" editor-type-id="text-editor">
         <state relative-caret-position="1410">
@@ -493,10 +623,7 @@
       <provider selected="true" editor-type-id="text-editor">
         <state relative-caret-position="5865">
           <caret line="404" column="0" lean-forward="true" selection-start-line="404" selection-start-column="0" selection-end-line="404" selection-end-column="0" />
-          <folding>
-            <element signature="e#0#18#0" expanded="true" />
-            <element signature="e#6055#10754#0" expanded="false" />
-          </folding>
+          <folding />
         </state>
       </provider>
     </entry>
@@ -524,10 +651,7 @@
       <provider selected="true" editor-type-id="text-editor">
         <state relative-caret-position="10800">
           <caret line="733" column="0" lean-forward="false" selection-start-line="733" selection-start-column="0" selection-end-line="733" selection-end-column="0" />
-          <folding>
-            <element signature="e#0#18#0" expanded="true" />
-            <element signature="e#6055#10754#0" expanded="false" />
-          </folding>
+          <folding />
         </state>
       </provider>
     </entry>
@@ -565,10 +689,7 @@
       <provider selected="true" editor-type-id="text-editor">
         <state relative-caret-position="10800">
           <caret line="733" column="0" lean-forward="false" selection-start-line="733" selection-start-column="0" selection-end-line="733" selection-end-column="0" />
-          <folding>
-            <element signature="e#0#18#0" expanded="true" />
-            <element signature="e#6055#10754#0" expanded="false" />
-          </folding>
+          <folding />
         </state>
       </provider>
     </entry>
@@ -616,10 +737,7 @@
       <provider selected="true" editor-type-id="text-editor">
         <state relative-caret-position="10800">
           <caret line="733" column="0" lean-forward="false" selection-start-line="733" selection-start-column="0" selection-end-line="733" selection-end-column="0" />
-          <folding>
-            <element signature="e#0#18#0" expanded="true" />
-            <element signature="e#6055#10754#0" expanded="false" />
-          </folding>
+          <folding />
         </state>
       </provider>
     </entry>
@@ -687,10 +805,7 @@
       <provider selected="true" editor-type-id="text-editor">
         <state relative-caret-position="4605">
           <caret line="317" column="0" lean-forward="false" selection-start-line="317" selection-start-column="0" selection-end-line="317" selection-end-column="0" />
-          <folding>
-            <element signature="e#0#18#0" expanded="true" />
-            <element signature="e#6055#10754#0" expanded="false" />
-          </folding>
+          <folding />
         </state>
       </provider>
     </entry>
@@ -708,10 +823,7 @@
       <provider selected="true" editor-type-id="text-editor">
         <state relative-caret-position="0">
           <caret line="0" column="0" lean-forward="false" selection-start-line="0" selection-start-column="0" selection-end-line="0" selection-end-column="0" />
-          <folding>
-            <element signature="e#0#18#0" expanded="true" />
-            <element signature="e#6055#10754#0" expanded="false" />
-          </folding>
+          <folding />
         </state>
       </provider>
     </entry>
@@ -739,10 +851,7 @@
       <provider selected="true" editor-type-id="text-editor">
         <state relative-caret-position="0">
           <caret line="0" column="0" lean-forward="false" selection-start-line="0" selection-start-column="0" selection-end-line="0" selection-end-column="0" />
-          <folding>
-            <element signature="e#0#18#0" expanded="true" />
-            <element signature="e#6055#10754#0" expanded="false" />
-          </folding>
+          <folding />
         </state>
       </provider>
     </entry>
@@ -770,10 +879,7 @@
       <provider selected="true" editor-type-id="text-editor">
         <state relative-caret-position="0">
           <caret line="0" column="0" lean-forward="true" selection-start-line="0" selection-start-column="0" selection-end-line="0" selection-end-column="0" />
-          <folding>
-            <element signature="e#0#18#0" expanded="true" />
-            <element signature="e#6055#10754#0" expanded="false" />
-          </folding>
+          <folding />
         </state>
       </provider>
     </entry>
@@ -802,41 +908,28 @@
       </provider>
     </entry>
     <entry file="file:///usr/lib/python2.7/dist-packages/numpy/core/fromnumeric.py" />
-    <entry file="file://$PROJECT_DIR$/fitutils.py">
+    <entry file="file://$PROJECT_DIR$/model.py">
       <provider selected="true" editor-type-id="text-editor">
-        <state relative-caret-position="311">
-          <caret line="194" column="0" lean-forward="false" selection-start-line="194" selection-start-column="0" selection-end-line="194" selection-end-column="0" />
+        <state relative-caret-position="6240">
+          <caret line="422" column="8" lean-forward="false" selection-start-line="422" selection-start-column="8" selection-end-line="422" selection-end-column="67" />
           <folding>
-            <element signature="e#0#19#0" expanded="true" />
-          </folding>
-        </state>
-      </provider>
-    </entry>
-    <entry file="file://$PROJECT_DIR$/scratch.py">
-      <provider selected="true" editor-type-id="text-editor">
-        <state relative-caret-position="101">
-          <caret line="435" column="0" lean-forward="false" selection-start-line="435" selection-start-column="0" selection-end-line="444" selection-end-column="27" />
-          <folding>
-            <element signature="e#0#25#0" expanded="true" />
+            <element signature="e#0#18#0" expanded="true" />
           </folding>
         </state>
       </provider>
     </entry>
     <entry file="file://$PROJECT_DIR$/imops.py">
       <provider selected="true" editor-type-id="text-editor">
-        <state relative-caret-position="3307">
-          <caret line="465" column="0" lean-forward="true" selection-start-line="316" selection-start-column="0" selection-end-line="465" selection-end-column="0" />
-          <folding>
-            <element signature="e#0#18#0" expanded="true" />
-            <element signature="e#6055#10754#0" expanded="false" />
-          </folding>
+        <state relative-caret-position="1185">
+          <caret line="93" column="25" lean-forward="false" selection-start-line="93" selection-start-column="25" selection-end-line="93" selection-end-column="25" />
+          <folding />
         </state>
       </provider>
     </entry>
-    <entry file="file://$PROJECT_DIR$/model.py">
+    <entry file="file://$PROJECT_DIR$/runops.py">
       <provider selected="true" editor-type-id="text-editor">
-        <state relative-caret-position="618">
-          <caret line="422" column="8" lean-forward="false" selection-start-line="422" selection-start-column="8" selection-end-line="422" selection-end-column="67" />
+        <state relative-caret-position="2190">
+          <caret line="146" column="50" lean-forward="false" selection-start-line="146" selection-start-column="50" selection-end-line="146" selection-end-column="50" />
           <folding>
             <element signature="e#0#18#0" expanded="true" />
           </folding>
@@ -845,10 +938,30 @@
     </entry>
     <entry file="file://$PROJECT_DIR$/main.py">
       <provider selected="true" editor-type-id="text-editor">
-        <state relative-caret-position="213">
-          <caret line="174" column="19" lean-forward="false" selection-start-line="174" selection-start-column="19" selection-end-line="174" selection-end-column="19" />
+        <state relative-caret-position="437">
+          <caret line="130" column="15" lean-forward="false" selection-start-line="130" selection-start-column="15" selection-end-line="130" selection-end-column="15" />
           <folding>
             <element signature="e#0#18#0" expanded="true" />
+          </folding>
+        </state>
+      </provider>
+    </entry>
+    <entry file="file://$PROJECT_DIR$/fitutils.py">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="105">
+          <caret line="15" column="40" lean-forward="false" selection-start-line="15" selection-start-column="40" selection-end-line="15" selection-end-column="40" />
+          <folding>
+            <element signature="e#0#19#0" expanded="true" />
+          </folding>
+        </state>
+      </provider>
+    </entry>
+    <entry file="file://$PROJECT_DIR$/scratch.py">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="240">
+          <caret line="419" column="33" lean-forward="false" selection-start-line="379" selection-start-column="0" selection-end-line="419" selection-end-column="33" />
+          <folding>
+            <element signature="e#0#25#0" expanded="true" />
           </folding>
         </state>
       </provider>

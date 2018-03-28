@@ -19,6 +19,7 @@ from time import time
 
 import imops
 import model
+import fitutils
 
 import imops
 
@@ -362,19 +363,25 @@ for i, x in enumerate(['x','y','a','b','t', 'v', 'e']):
     ax[i].scatter(params_mean[x], s=0.5, alpha=0.2, c='k')
 
 ##########################
-vid = cv2.VideoCapture(vid_file)
-cv2.namedWindow('run', flags=cv2.WINDOW_NORMAL)
+
 #fig, ax = plt.subplots(4,1)
-thetas = np.linspace(0, np.pi*2, num=100, endpoint=False)
-frame_counter = count()
+thetas = np.linspace(0, np.pi*2, num=200, endpoint=False)
+
 emod = measure.EllipseModel()
 
-fn = '/home/lab/pupil_vids/nick1_track_smooth2.mp4'
+fn = '/home/lab/pupil_vids/nick3_track2.mp4'
 #fourcc = cv2.VideoWriter_fourcc(*"X264")
 writer = io.FFmpegWriter(fn)
 
+ell_params = fitutils.clean_lists(x_list, y_list, a_list, b_list, t_list, v_list, n_list)
+ell_params = fitutils.basic_filter(ell_params, ix, iy, rad)
+ell_out = fitutils.filter_outliers(ell_params, neighbors=500)
+ell_smooth = fitutils.smooth_estimates(ell_out, hl=5)
 
-while True:
+vid = cv2.VideoCapture(vid_file)
+frame_counter = count()
+cv2.namedWindow('run', flags=cv2.WINDOW_NORMAL)
+for i in xrange(len(ell_smooth)):
     k = cv2.waitKey(1) & 0xFF
     if k == ord('\r'):
         break
@@ -388,7 +395,7 @@ while True:
     n_frame = frame_counter.next()
 
     try:
-        aframe_params = params_smooth.loc[n_frame,['x','y','a','b','t']]
+        aframe_params = ell_smooth.loc[n_frame,['x','y','a','b','t']]
     except:
         frame_orig = imops.crop(frame_orig, roi)
         frame_orig = img_as_float(frame_orig)

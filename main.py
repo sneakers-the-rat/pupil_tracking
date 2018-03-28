@@ -119,7 +119,15 @@ batch_frames = np.ndarray((frame.shape[0], frame.shape[1], batch_size), dtype=np
 params_frames = []
 results = []
 
-for i in xrange(501):
+x_list = []
+y_list = []
+a_list = []
+b_list = []
+t_list = []
+n_list = []
+v_list = []
+
+for i in xrange(1000):
     k = cv2.waitKey(1) & 0xFF
     if k == ord('\r'):
         break
@@ -133,19 +141,56 @@ for i in xrange(501):
     pbar.update()
     frame_orig = cv2.cvtColor(frame_orig, cv2.COLOR_BGR2GRAY)
     frame_orig = imops.crop(frame_orig, roi)
-    batch_frames[:, :, n_frame%batch_size] = frame_orig
 
-    if n_frame % batch_size == 0:
-        batch_number = batch_counter.next()
-        results.append(pool.apply_async(runops.process_frames, args=(batch_frames.copy(), params, batch_number)))
-        batch_frames = np.ndarray((frame.shape[0], frame.shape[1], batch_size), dtype=np.uint8)
-        print(len(params_frames))
+    frame = imops.preprocess_image(frame_orig, params['roi'],
+                                   sig_cutoff=params['sig_cutoff'],
+                                   sig_gain=params['sig_gain'])
+
+    edges = imops.scharr_canny(frame, sigma=params['canny_sig'],
+                               high_threshold=params['canny_high'], low_threshold=params['canny_low'])
+
+    edges_rep = imops.repair_edges(edges, frame)
+
+    labeled_edges = morphology.label(edges)
+
+    uq_edges = np.unique(labeled_edges)
+    uq_edges = uq_edges[uq_edges > 0]
+    ellipses = [imops.fit_ellipse(labeled_edges, e) for e in uq_edges]
+    ell_pts = np.ndarray(shape=(0, 2))
+    for e in ellipses:
+        if not e:
+            continue
+
+        x_list.append(e.params[0])
+        y_list.append(e.params[1])
+        a_list.append(e.params[2])
+        b_list.append(e.params[3])
+        t_list.append(e.params[4])
+        n_list.append(n_frame)
+        # get mean darkness
+        ell_mask_y, ell_mask_x = draw.ellipse(e.params[0], e.params[1], e.params[2], e.params[3],
+                                              shape=(labeled_edges.shape[1], labeled_edges.shape[0]),
+                                              rotation=e.params[4])
+
+        v_list.append(np.mean(frame[ell_mask_x, ell_mask_y]))
 
 
 
-params_frames = [job.get() for job in results]
-pool.close()
-pool.join()
+        #batch_frames[:, :, n_frame%batch_size] = frame_orig
+
+    # if n_frame % batch_size == 0:
+    #     batch_number = batch_counter.next()
+    #     results.append(pool.apply_async(runops.process_frames, args=(batch_frames.copy(), params, batch_number)))
+    #     batch_frames = np.ndarray((frame.shape[0], frame.shape[1], batch_size), dtype=np.uint8)
+    #     print(len(params_frames))
+
+
+
+
+
+#params_frames = [job.get() for job in results]
+#pool.close()
+#pool.join()
 
 print(params_frames)
 
