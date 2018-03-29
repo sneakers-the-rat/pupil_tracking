@@ -18,20 +18,13 @@ from matplotlib import pyplot as plt
 def crop(im, roi):
     return im[roi[1]:roi[1]+roi[3], roi[0]:roi[0]+roi[2]]
 
+
 def invert_color(im):
     if im.dtype == 'uint8':
         return 255-im
     elif im.dtype == float:
         return 1.-im
 
-def kmeans_img(img, n_clusters, k_criteria):
-    img_shape = img.shape
-    img = img.reshape(-1, 1)
-    img = np.float32(img)
-    ret, label, center = cv2.kmeans(img, n_clusters, None, k_criteria, 16, cv2.KMEANS_RANDOM_CENTERS)
-    res = center[label]
-    res = res.reshape(img_shape)
-    return res
 
 def circle_mask(frame, ix, iy, rad):
     # get a boolean mask from circular parameters
@@ -42,37 +35,7 @@ def circle_mask(frame, ix, iy, rad):
     return pmask
 
 
-def infer_sigmoid(img, mask):
-    X = img.reshape(-1, 1)
-    y = mask.flatten()
-    logistic = LogisticRegression()
-    logistic.fit(X, y)
-    return logistic
-
-def logistic_image(img, logistic):
-    # actually sigmoid adjust instead of skimage bs reverse parameterization
-    img_flat = img.reshape(-1, 1)
-    preds = logistic.predict_proba(img_flat)
-    img_mult = np.multiply(img_flat.flatten(), preds[:,1])
-    img_mult = img_mult.reshape(img.shape[0], img.shape[1])
-    return img_mult
-
-
-def draw_circle(event,x,y,flags,param):
-    # Draw a circle on the frame to outline the pupil
-    global ix,iy,drawing,rad,frame_pupil
-    if event == cv2.EVENT_LBUTTONDOWN:
-        drawing = True
-        ix,iy = x,y
-    elif event == cv2.EVENT_MOUSEMOVE:
-        if drawing == True:
-            rad = np.round(euclidean([ix,iy], [x,y])).astype(np.int)
-            #cv2.circle(frame_pupil,(ix,iy),rad,(255,255,255),-1)
-    elif event == cv2.EVENT_LBUTTONUP:
-        drawing = False
-        #cv2.circle(frame_pupil,(ix,iy),rad,(255,255,255),-1)
-
-def edges2xy(edges, which_edge=None, sort=True):
+def edges2xy(edges, which_edge=None, order=True):
     if not isinstance(which_edge, int):
         edges_xy = np.where(edges)
     else:
@@ -81,55 +44,41 @@ def edges2xy(edges, which_edge=None, sort=True):
     edges_xy = np.column_stack(edges_xy)
 
     # reorder so points are in spatial order (rather than axis=0 order)
-    if sort:
+    if order:
         edges_xy = order_points(edges_xy)
 
     return edges_xy
 
 
+def preprocess_image(img, roi, gauss_sig=None, sig_cutoff=None, sig_gain=None, closing=3):
+    if len(img.shape)>2:
+        img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        img = crop(img, roi)
+    # otherwise we've got a recolored/cropped image already
 
-
-def preprocess_image(img, roi, gauss_sig=None, logistic=None, sig_cutoff=None, sig_gain=None):
-    #img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    #img = crop(img, roi)
     img = invert_color(img)
 
     img = exposure.equalize_hist(img)
+
 
     if gauss_sig:
         img = filters.gaussian(img, sigma=gauss_sig)
 
-    if logistic:
-        img = logistic_image(img, logistic)
-    elif sig_cutoff and sig_gain:
+    if sig_cutoff and sig_gain:
         img = exposure.adjust_sigmoid(img, cutoff=sig_cutoff, gain=sig_gain)
 
-    return img
-
-
-def preprocess_image_old(img, roi, sig_cutoff=0.5, sig_gain=1, n_colors=12,
-                     k_criteria=(cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 30, 0.2),
-                     gauss_sig=0.5):
-    img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    img = crop(img, roi)
-    img = invert_color(img)
-
-    img = exposure.equalize_hist(img)
-
-    #img = exposure.adjust_sigmoid(img, cutoff=sig_cutoff, gain=sig_gain)
-
-    # posterize to k colors
-    #img = kmeans_img(img, n_colors, k_criteria)
-
-    # blur
-    #img = filters.gaussian(img, sigma=gauss_sig)
+    img = morphology.closing(img, selem=morphology.disk(closing))
 
     return img
 
 
-def fit_ellipse(edges, which_edge):
-    edge_points = np.where(edges == which_edge)
-    edge_points = np.column_stack((edge_points[1], edge_points[0]))
+def fit_ellipse(edges, which_edge=1):
+    if edges.shape[1]>2:
+        # imagelike
+        edge_points = np.where(edges == which_edge)
+        edge_points = np.column_stack((edge_points[1], edge_points[0]))
+    else:
+        edge_points = edges
     ellipse = measure.EllipseModel()
     ret = ellipse.estimate(edge_points)
     if ret == True:
@@ -186,12 +135,15 @@ def edge_vectors(frame, sigma=1, return_angles = False):
     else:
         return grad_x, grad_y, edge_scale
 
+
 def scharr_canny(image, sigma, low_threshold=0.2, high_threshold=0.5):
     # skimage's canny but we get scharr grads instead of sobel,
     # and use the eigenvalues of the structure tensor rather than the hypotenuse
 
-    isobel = filters.gaussian(cv2.Scharr(image, ddepth=-1, dx=0, dy=1), sigma=sigma)
-    jsobel = filters.gaussian(cv2.Scharr(image, ddepth=-1, dx=1, dy=0), sigma=sigma)
+    isobel = cv2.GaussianBlur(cv2.Scharr(image, ddepth=-1, dx=0, dy=1), ksize=(0,0), sigmaX=sigma)
+    jsobel = cv2.GaussianBlur(cv2.Scharr(image, ddepth=-1, dx=1, dy=0), ksize=(0,0), sigmaX=sigma)
+
+
     abs_isobel = np.abs(isobel)
     abs_jsobel = np.abs(jsobel)
 
@@ -209,11 +161,14 @@ def scharr_canny(image, sigma, low_threshold=0.2, high_threshold=0.5):
     # Make the eroded mask. Setting the border value to zero will wipe
     # out the image edges for us.
     #
-    mask = np.ones(image.shape)
-    s = generate_binary_structure(2, 2)
-    eroded_mask = binary_erosion(mask, s, border_value=0)
-    eroded_mask = eroded_mask & (magnitude > 0)
-    #
+    #mask = np.ones(image.shape)
+    #s = generate_binary_structure(2, 2)
+    #eroded_mask = binary_erosion(mask, s, border_value=0)
+    #eroded_mask = eroded_mask & (magnitude > 0)
+    eroded_mask = np.zeros(image.shape, dtype=np.bool)
+    eroded_mask[1:-1, 1:-1] = True
+
+
     #--------- Find local maxima --------------
     #
     # Assign each point to have a normal of 0-45 degrees, 45-90 degrees,
@@ -309,18 +264,18 @@ def scharr_canny(image, sigma, low_threshold=0.2, high_threshold=0.5):
     output_mask = good_label[labels]
 
     # skeletonize to reduce thick pixels we mighta missed
-    output_mask = morphology.skeletonize(output_mask)
+    #output_mask = morphology.skeletonize(output_mask)
 
     return output_mask
 
 
-def repair_edges(edges, frame, sigma=3):
+def repair_edges(edges, frame, sigma=3, small_thresh=20):
     # connect contiguous edges, disconnect edges w/ sharp angles
     # expect a binary edge image, like from feature.canny
     # im_grad should be complex (array of vectors)
 
     # super inefficient rn, will eventually just work with xy's directly but...
-    edges = edges.copy()
+    #edges = edges.copy()
 
     label_edges = morphology.label(edges)
 
@@ -330,69 +285,137 @@ def repair_edges(edges, frame, sigma=3):
     if len(uq_edges) == 0:
         return
 
-    # delete tiny edges
-    uq_edges = uq_edges[counts > 30]
-    edges[~np.isin(label_edges, uq_edges)] = 0
-
-
+    # get x/y representation so we don't have to keep passing a buncha booleans
+    edges_xy = [edges2xy(label_edges, e) for e in uq_edges]
 
     ##################################
-    # first, go through and break edges at corners and inflection points
-    edges = delete_corners(edges=edges, label_edges=label_edges, uq_edges=uq_edges)
+    # repair
+
+    # delete tiny edges
+    edges_xy = [e for e in edges_xy if len(e)>small_thresh]
+    if len(edges_xy)==0:
+        return []
+
+    # break edges at corners and inflection points
+    edges_xy = break_corners(edges_xy)
 
     # delete tiny edges again
-    edges = remove_tiny_edges(edges)
+    edges_xy = [e for e in edges_xy if len(e) > small_thresh]
+    if len(edges_xy) == 0:
+        return []
 
-    # filter points that are convex around darkness
-    #edges = positive_convexity(edges, frame)
-
-    # one last time
-    #edges = remove_tiny_edges(edges)
+    # # filter points that are convex around darkness
+    # edges_xy = positive_convexity(edges_xy, frame)
+    # #
+    # # # one last time
+    # edges_xy = [e for e in edges_xy if len(e) > small_thresh]
+    # if len(edges_xy) == 0:
+    #     return []
 
     # reconnect edges based on position, image gradient, and edge affinity
-    edges = merge_curves(edges, frame, sigma=sigma)
+    edges_xy = merge_curves(edges_xy, frame, sigma=sigma)
 
     # final round of breaking curves if we introduced any bad ones in our merge
-    #edges = delete_corners(edges=edges)
+    edges_xy = break_corners(edges_xy)
 
-    return edges
+    return edges_xy
 
-def delete_corners(edges=None,label_edges=None, uq_edges=None):
-    if (edges is None) and (label_edges is None):
-        Exception('Need either edges or labeled edges!')
+def break_corners(edges_xy):
+    return_edges = []
 
-    if (edges is not None) and (label_edges is None):
-        label_edges =morphology.label(edges)
-        uq_edges = np.unique(label_edges)
-        uq_edges = uq_edges[uq_edges > 0]
-
-    if (label_edges is not None) and (uq_edges is None):
-        edges = label_edges>0
-        uq_edges = np.unique(label_edges)
-        uq_edges = uq_edges[uq_edges > 0]
-
-    if edges is None:
-        edges = label_edges > 0
-
-    edges_xy = [edges2xy(label_edges, e) for e in uq_edges]
-    delete_mask = np.zeros(edges.shape, dtype=np.bool)
-    num = 0
+    #delete_mask = np.zeros(edges.shape, dtype=np.bool)
     for edge_xy in edges_xy:
-        num +=1
-        delete_points = break_corners(edge_xy)
+        return_edges.extend(break_at_corners(edge_xy))
 
-        # if delete_points gets returned as False, delete this whole segment
-        if delete_points == False:
-            edges[edge_xy[:,0], edge_xy[:,1]] = 0
-        elif len(delete_points)>0:
-            for p in delete_points:
-                delete_mask[p[0], p[1]] = True
+    return return_edges
 
-    # do a dilation w/ square to get all the neighboring points too
-    # use 5-diam square so reconnecting doesn't make T's
-    delete_mask = morphology.binary_dilation(delete_mask, selem=morphology.square(5))
-    edges[delete_mask] = 0
-    return edges
+
+def break_at_corners(edge_xy, return_segments=False, corner_thresh=.6, delete_straight=False):
+    # pass in an ordered list of x/y coords,
+    # using prasad's line estimation we break edges at sharp turns/inflection points
+    # returns an array of coords of corners/inflection points to
+    # modify the edge image
+    # Sharp turn threshold is set to ~65 degrees (1.1 rads) by default.
+
+    # make prasad segments
+    # keep both point and segment representations,
+    # we want to work with segments, but we ultimately need to
+    # figure out which point to delete
+    #
+    # there will be n points, n-1 segments, and n-2 angles.
+    # so splitting the edge at point 0<i<n (we don't split endpoints dummy!)
+    # will depend on angle i-1
+
+    segs_points = prasad_lines(edge_xy)
+
+    segs = nodes2segs(segs_points)
+
+    # get angles between segments
+    angles = [] # dot product between vectors, tells sharp angles
+    inflection = [] # dot product between n+1 vector and (-y, x) of n vector
+    for i in range(len(segs)-1):
+        # make segments unit vectors
+        seg1, seg2 = segs[i], segs[i+1]
+        seg_n = normalize([[seg1[1][0]-seg1[0][0], seg1[1][1]-seg1[0][1]],
+                              [seg2[1][0]-seg2[0][0], seg2[1][1]-seg2[0][1]]])
+
+        # dot product of vector 2 and perp. vector to v1 (x,y)T = (-y,x)
+
+
+        inflection.append(-seg_n[0,1]*seg_n[1,0]+seg_n[0,0]*seg_n[1,1])
+        angles.append(seg_n[0, 0] * seg_n[1, 0] + seg_n[0, 1] * seg_n[1, 1])
+
+    # first thing's first, if we get back a 2 pt segment
+    # recommend to delete the whole segment by returning False
+
+    if len(angles) == 0 and delete_straight:
+        return []
+
+
+    # otherwise go through and find sharp angles and inflection points
+    # boolean mask for deletion of points
+    angles = np.array(angles)
+    inflection = np.array(inflection)
+
+    # look for sharp edges
+    split_pts = np.zeros(len(segs_points), dtype=np.bool)
+    split_pts[np.where(angles < corner_thresh)[0] + 1] = True
+
+    # and inflection points
+    # sorry for how this works so sucky, head unclear.
+    signs = np.zeros(len(inflection), dtype=np.bool)
+    signs[np.where(inflection >= 0)] = True
+    last_deleted = False
+    for i in range(len(angles)):
+        if last_deleted:
+            # don't want to double-punish inflection points,
+            # when we cut, we make a new edge, so it doesnt make sense to
+            # also cut the next sign for being different because it has
+            # nothing to be different from in its new life
+            last_deleted =False
+            continue
+
+        if i>0:
+            if signs[i-1] != signs[i]:
+                split_pts[i+1] =True
+                last_deleted=True
+
+    # return a list of split edges
+    return_segs = []
+    split_inds = np.where(split_pts)[0]
+    if np.alen(split_inds)==0:
+        return_segs.append(edge_xy)
+    else:
+        for split in np.where(split_pts)[0]:
+            split_at = np.array(segs_points[split])
+            split_ind = np.where((edge_xy == split_at).all(axis=1))[0][0]
+            return_segs.append(edge_xy[:split_ind-2,:])
+            edge_xy = edge_xy[split_ind+2:,:]
+        return_segs.append(edge_xy)
+
+
+    return return_segs
+
 
 def remove_tiny_edges(edges, thresh=30):
     label_edges = morphology.label(edges)
@@ -402,7 +425,7 @@ def remove_tiny_edges(edges, thresh=30):
     edges[~np.isin(label_edges, uq_edges)] = 0
     return edges
 
-def merge_curves(edges, frame, sigma=3, threshold=0.5):
+def merge_curves(edges_xy, frame, sigma=3, threshold=0.3):
     '''
     Given a binary array of edges and a grayscale image,
     generate three metrics of continuity for corner points (edges of edges):
@@ -418,10 +441,6 @@ def merge_curves(edges, frame, sigma=3, threshold=0.5):
     '''
 
     # get edge points
-    label_edges = morphology.label(edges)
-    uq_edges = np.unique(label_edges)
-    uq_edges = uq_edges[uq_edges>0]
-    edges_xy = [edges2xy(label_edges, e) for e in uq_edges]
     edge_points = np.row_stack([(e[0], e[-1]) for e in edges_xy])
 
     # image gradients
@@ -433,7 +452,7 @@ def merge_curves(edges, frame, sigma=3, threshold=0.5):
     ## 1. distance
 
     # get the  euclidean distances between points as a fraction of image size
-    edge_dists = distance.squareform(distance.pdist(edge_points))/np.max(frame.shape)
+    edge_dists = distance.squareform(distance.pdist(edge_points))/np.min(frame.shape)
 
     ## 2. gradient similarity
     # and the dot product of the image gradient
@@ -482,7 +501,7 @@ def merge_curves(edges, frame, sigma=3, threshold=0.5):
     edge_grads = 1-(edge_grads/2.) # cosine distance is 0-2
     edge_affinity = 1-(edge_affinity/2.)
 
-    merge_score = edge_dists**6 * edge_grads**2 * edge_affinity**2
+    merge_score = edge_dists * edge_grads**2 * edge_affinity**2
     merge_score[np.isnan(merge_score)] = 0.
 
     # zero nonmax joins (only want to join each end one time at most..
@@ -502,28 +521,44 @@ def merge_curves(edges, frame, sigma=3, threshold=0.5):
     # filter points that are on the same curve...
     merge_points = merge_points[(merge_points/2)[:,0] != (merge_points/2)[:,1],:]
 
-    # and draw them on the edge image
-    for i in range(len(merge_points)):
-        points = np.row_stack((edge_points[merge_points[i,0],:],
-                              edge_points[merge_points[i,1],:]))
-        join_points = line_mask(points)
-        edges[join_points[:,0], join_points[:,1]] = 1
+    # make the merged segments, pop the originals and combine
+    newsegs = []
+    for p in merge_points:
+        seg1 = edges_xy[p[0]//2]
+        seg2 = edges_xy[p[1]//2]
 
-    return edges
+        # stack correctly!
+        # if we have an odd and an even, just append
+        if p[0]%2<1 and p[1]%2>0:
+            # ie. p[0] is at the beginning of the array, p[1] at the end
+            newseg = np.row_stack((seg2, seg1))
+        elif p[0]%2>0 and p[1]%2<1:
+            # ie. the opposite
+            newseg = np.row_stack((seg1, seg2))
+        elif p[0]%2<1 and p[1]%2<1:
+            # both are at the beginning, flip one and append to the start
+            newseg = np.row_stack((np.flipud(seg1), seg2))
+        elif p[0]%2>0 and p[1]%2>0:
+            # only one more possibility...
+            newseg = np.row_stack((seg1, np.flipud(seg2)))
+        else:
+            Exception("What the hell happened here? {}".format(p))
+
+        newsegs.append(newseg)
+
+    # now we can remove the original segs and append
+    edges_xy = [e for i, e in enumerate(edges_xy) if i not in merge_points.flatten()//2]
+    edges_xy.extend(newsegs)
+
+    return edges_xy
 
 def positive_convexity(edges, frame, brightness=True):
     # filter edges that are convex around darkness (or brightness
 
-    # relabel and delete small edges
-    label_edges = morphology.label(edges)
-    uq_edges = np.unique(label_edges)
-    uq_edges = uq_edges[uq_edges>0]
-
-
-    for e in uq_edges:
-        one_edge = label_edges.copy()
-        one_edge[one_edge != e] = 0
-        one_edge[one_edge == e] = 1
+    keep_inds = []
+    for i, e in enumerate(edges):
+        one_edge = np.zeros(frame.shape, dtype=np.bool)
+        one_edge[e[:,0], e[:,1]] = True
 
         hull = morphology.convex_hull_image(one_edge)
 
@@ -534,88 +569,15 @@ def positive_convexity(edges, frame, brightness=True):
         outer_val = np.median(frame[outer_points])
 
         if brightness:
-            if inner_val < outer_val:
-                edge_xy = edges2xy(label_edges, e)
-                edges[edge_xy[:,0], edge_xy[:,1]] = 0
+            if inner_val > outer_val:
+                keep_inds.append(i)
         else:
             if outer_val < inner_val:
-                edge_xy = edges2xy(label_edges, e)
-                edges[edge_xy[:,0], edge_xy[:,1]] = 0
+                keep_inds.append(i)
+
+    edges = [edges[i] for i in keep_inds]
 
     return edges
-
-def break_corners(edge_xy, return_segments=False, corner_thresh=.3):
-    # pass in an ordered list of x/y coords,
-    # using prasad's line estimation we break edges at sharp turns/inflection points
-    # returns an array of coords of corners/inflection points to
-    # modify the edge image
-    # Sharp turn threshold is set to ~65 degrees (1.1 rads) by default.
-
-    # make prasad segments
-    # keep both point and segment representations,
-    # we want to work with segments, but we ultimately need to
-    # figure out which point to delete
-    #
-    # there will be n points, n-1 segments, and n-2 angles.
-    # so splitting the edge at point 0<i<n (we don't split endpoints dummy!)
-    # will depend on angle i-1
-
-    segs_points = prasad_lines(edge_xy)
-    segs = nodes2segs(segs_points)
-
-    # get angles between segments
-    angles = [] # dot product between vectors, tells sharp angles
-    inflection = [] # dot product between n+1 vector and (-y, x) of n vector
-    for i in range(len(segs)-1):
-        # make segments unit vectors
-        seg1, seg2 = segs[i], segs[i+1]
-        seg_n = normalize([[seg1[1][0]-seg1[0][0], seg1[1][1]-seg1[0][1]],
-                              [seg2[1][0]-seg2[0][0], seg2[1][1]-seg2[0][1]]])
-
-        # dot product of vector 2 and perp. vector to v1 (x,y)T = (-y,x)
-
-
-        inflection.append(-seg_n[0,1]*seg_n[1,0]+seg_n[0,0]*seg_n[1,1])
-        angles.append(seg_n[0, 0] * seg_n[1, 0] + seg_n[0, 1] * seg_n[1, 1])
-
-    # first thing's first, if we get back a 2 pt segment
-    # recommend to delete the whole segment by returning False
-
-    if len(angles) == 0:
-        return False
-
-
-    # otherwise go through and find sharp angles and inflection points
-    # boolean mask for deletion of points
-    delete_pts = np.zeros(len(segs_points), dtype=np.bool)
-    angles = np.array(angles)
-    inflection = np.array(inflection)
-
-    # look for sharp edges
-    delete_pts[np.where(angles < corner_thresh)[0] + 1] = True
-
-    # and inflection points
-    # sorry for how this works so sucky, head unclear.
-    signs = np.zeros(len(inflection), dtype=np.bool)
-    signs[np.where(inflection >= 0)] = True
-    last_deleted = False
-    for i in range(len(angles)):
-        if last_deleted:
-            # don't want to double-punish inflection points,
-            # when we cut, we make a new edge, so it doesnt make sense to
-            # also cut the next sign for being different because it has
-            # nothing to be different from in its new life
-            last_deleted =False
-            continue
-
-        if i>0:
-            if signs[i-1] != signs[i]:
-                delete_pts[i+1] =True
-                last_deleted=True
-
-
-    # return the inds of the points to delete
-    return [p for i, p in enumerate(segs_points) if delete_pts[i]]
 
 
 def nodes2segs(segs):
@@ -644,209 +606,69 @@ def plot_edge(labeled_edges, edge):
 
 
 def order_points(edge_points):
-    # convert edge masks to ordered x-y coords
-
-    if isinstance(edge_points, list):
-        edge_points = np.array(edge_points)
-
-    if edge_points.shape[1] > 2:
-        # starting w/ imagelike thing, get the points
-        edge_points = np.column_stack(np.where(edge_points))
-
     dists = distance.squareform(distance.pdist(edge_points))
-    # make binary connectedness graph, max dist is ~1.4 for diagonal pix
-    # convert to 3 and 2 so singly-connected points are always <4
-    dists[dists > 1.5] = 0
-    dists[dists >1]    = 3
-    dists[dists == 1]  = 2
 
-    # check if we have easy edges
-    dists_sum = np.sum(dists, axis=1)
+    inds = {i: i for i in range(len(edge_points))}
 
-    ends = np.where(dists_sum<4)[0]
-    if len(ends)>0:
-        pt_i = ends[0]
-        first_i = ends[0]
-        got_end = True
-    else:
-        # otherwise just start at the beginning
-        pt_i = 0
-        first_i = 0
-        got_end = False
+    backwards = False
+    found=False
+    point = 0
+    new_points = dq()
+    new_points.append(edge_points[inds.pop(point), :])
 
-    # walk through our dist graph, gathering points as we go
-    inds = range(len(edge_points))
-    new_pts = dq()
-    forwards = True
-    # this confusing bundle will get reused a bit...
-    # we are making a new list of points, and don't want to double-count points
-    # but we can't pop from edge_points directly, because then the indices from the
-    # dist mat will be wrong. Instead we make a list of all the indices and pop
-    # from that. But since popping will change the index/value parity, we
-    # have to double index inds.pop(inds.index(etc.))
-
-    new_pts.append(edge_points[inds.pop(inds.index(pt_i))])
     while True:
-        # get dict of connected points and distances
-        # filtered by whether the index hasn't been added yet
-        connected_pts = [k for k in np.where(dists[pt_i, :])[0] if k in inds]
+        close_enough = np.where(np.logical_and(dists[point, :] > 0, dists[point, :] < 3))[0]
+        #close_enough = close_enough[np.isin(close_enough, inds.keys(), assume_unique=True)]
+        close_enough = close_enough[np.argsort(dists[point,close_enough])]
 
-        # if we get nothing, we're either done or we have to go back to the first pt
-        if len(connected_pts) == 0:
-            if got_end:
-                # still have points left, go back to first and go backwards
-                pt_i = first_i
-                forwards = False
-                got_end = False
+        if np.alen(close_enough)==0:
+            # either at one end or *the end*
+            if not backwards:
+                point = 0
+                backwards = True
                 continue
             else:
-                # got to the end lets get outta here
                 break
 
-        # find point with min distance (take horiz/vert points before diags)
-        pt_i = connected_pts[np.argmax([dists[pt_i, k] for k in connected_pts])]
-        if forwards:
-            new_pts.append(edge_points[inds.pop(inds.index(pt_i))])
+        for p in close_enough:
+            try:
+                point = inds.pop(p)
+                found=True
+                break
+            except KeyError:
+                continue
+        # point = close_enough[np.argmin(dists[point,close_enough])]
+
+        # for p in close_enough:
+        #     try:
+        #         point=inds[p]
+        #         point=p
+        #         found=True
+        #     except KeyError:
+        #         # sorta the point.. keep trying until we find a key that hasn't been popped
+        #         continue
+
+        if not found:
+            # didn't find a point, same as previous check
+            if not backwards:
+                point = 0
+                backwards = True
+                continue
+            else:
+                break
+
+
+
+        if not backwards:
+            #new_points.append(edge_points[inds.pop(point), :])
+            new_points.append(edge_points[point, :])
         else:
-            new_pts.appendleft(edge_points[inds.pop(inds.index(pt_i))])
+            #new_points.appendleft(edge_points[inds.pop(point), :])
+            new_points.appendleft(edge_points[point, :])
 
-    return np.array(new_pts)
+        found=False
 
-def order_points_new(edge_points):
-    # convert edge masks to ordered x-y coords
-
-    if isinstance(edge_points, list):
-        edge_points = np.array(edge_points)
-
-    if edge_points.shape[1] > 2:
-        # starting w/ imagelike thing, get the points
-        edge_points = np.column_stack(np.where(edge_points))
-
-    dists = distance.squareform(distance.pdist(edge_points))
-    # make binary connectedness graph, max dist is ~1.4 for diagonal pix
-    # convert to 3 and 2 so singly-connected points are always <4
-    dists[dists > 1.5] = 0
-    dists[dists >1]    = 3
-    dists[dists == 1]  = 2
-
-    # check if we have easy edges
-    dists_sum = np.sum(dists, axis=1)
-
-    ends = np.where(dists_sum<4)[0]
-    if len(ends)>0:
-        pt_i = ends[0]
-        first_i = ends[0]
-        got_end = True
-    else:
-        # otherwise just start at the beginning
-        pt_i = 0
-        first_i = 0
-        got_end = False
-
-    # walk through our dist graph, gathering points as we go
-    inds = range(len(edge_points))
-    new_pts = dq()
-    forwards = True
-    # this confusing bundle will get reused a bit...
-    # we are making a new list of points, and don't want to double-count points
-    # but we can't pop from edge_points directly, because then the indices from the
-    # dist mat will be wrong. Instead we make a list of all the indices and pop
-    # from that. But since popping will change the index/value parity, we
-    # have to double index inds.pop(inds.index(etc.))
-
-    new_pts.append(edge_points[inds.pop(inds.index(pt_i))])
-    while True:
-        # get dict of connected points and distances
-        # filtered by whether the index hasn't been added yet
-        #connected_pts = {k: dists[pt_i,k] for k in np.where(dists[pt_i,:])[0] if k in inds}
-        connected_pts = [k for k in np.where(dists[pt_i, :])[0] if k in inds]
-
-        # if we get one, cool. just append
-        if len(connected_pts) == 1:
-            #pt_i = connected_pts.keys()[0]
-            pt_i = connected_pts[0]
-            if forwards:
-                new_pts.append(edge_points[inds.pop(inds.index(pt_i))])
-            else:
-                new_pts.appendleft(edge_points[inds.pop(inds.index(pt_i))])
-
-        # if we get more than one, find the longest one
-        if len(connected_pts) > 1:
-            chains = {}
-            chain_inds = {}
-            last_pts = {}
-            # recursively call walk_points
-            for k in connected_pts:
-                chains[k], chain_inds[k], last_pts[k] = walk_points(dists, edge_points, k, inds)
-            longest_chain = max(chains.items(), key=lambda x: len(x[1]))[0]
-            if forwards:
-                new_pts.extend(chains[longest_chain])
-            else:
-                new_pts.extendleft(chains[longest_chain])
-            inds = chain_inds[longest_chain]
-            pt_i = last_pts[longest_chain]
-
-            if (len(inds)>0) and not got_end:
-                # still have the other side to doooooo
-                pt_i = first_i
-                forwards = False
-                got_end = False
-                continue
-            else:
-                break
-
-        # if we get nothing, we're either done or we have to go back to the first pt
-        if len(connected_pts) == 0:
-            if got_end:
-                # still have points left, go back to first and go backwards
-                pt_i = first_i
-                forwards = False
-                got_end = False
-                continue
-            else:
-                # got to the end lets get outta here
-                break
-
-        # find point with min distance (take horiz/vert points before diags)
-        #pt_i = min(connected_pts, key=connected_pts.get)
-
-
-    return np.array(new_pts)
-
-def walk_points(dists,edge_points, pt_i, inds):
-    pt_i = copy(pt_i)
-    inds = copy(inds)
-    new_pts = []
-    new_pts.append(edge_points[inds.pop(inds.index(pt_i))])
-    while True:
-        # get dict of connected points and distances
-        # filtered by whether the index hasn't been added yet
-        try:
-            connected_pts = [k for k in np.where(dists[pt_i,:])[0] if k in inds]
-        except ValueError:
-            connected_pts = [k for k in np.where(dists[pt_i, :]) if k in inds]
-
-        # if we get nothing, we're done
-        if len(connected_pts) == 0:
-            break
-
-        # find point with min distance (take horiz/vert points before diags)
-        if len(connected_pts) == 1:
-            pt_i = connected_pts[0]
-            new_pts.append(edge_points[inds.pop(inds.index(pt_i))])
-
-        if len(connected_pts) > 1:
-            chains = {}
-            chain_inds = {}
-            last_pts = {}
-            for k in connected_pts:
-                chains[k], chain_inds[k], last_pts[k] = walk_points(dists, edge_points, k, inds)
-            longest_chain = max(chains.items(), key=lambda x: len(x[1]))[0]
-            new_pts.extend(chains[longest_chain])
-            inds = chain_inds[longest_chain]
-            pt_i = last_pts[longest_chain]
-
-    return new_pts, inds, pt_i
+    return np.row_stack(new_points)
 
 
 
@@ -956,35 +778,56 @@ def prasad_digital_error(ss):
     # all credit to http://ieeexplore.ieee.org/document/6166585/
     # adapted from MATLAB scripts here: https://docs.google.com/open?id=0B10RxHxW3I92dG9SU0pNMV84alk
 
-    phi = np.arange(0, np.pi*2, np.pi / 360)
+    # constants are hardcoded for faster operation
+
+    # phi = np.arange(0, np.pi*2, np.pi / 180)
 
     #s, phii = np.meshgrid(ss, phi)
 
-    sin_p = np.sin(phi)
-    cos_p = np.cos(phi)
-    sin_plus_cos = sin_p+cos_p
-    sin_minus_cos = sin_p-cos_p
+    #sin_p = np.sin(phi)
+    #cos_p = np.cos(phi)
+    #sin_plus_cos = sin_p+cos_p
+    #sin_minus_cos = sin_p-cos_p
 
-    term1 = []
-    term1.append(np.abs(cos_p))
-    term1.append(np.abs(sin_p))
-    term1.append(np.abs(sin_plus_cos))
-    term1.append(np.abs(sin_minus_cos))
+    #term1 = []
+    #term1.append(np.abs(cos_p))
+    #term1.append(np.abs(sin_p))
+    #term1.append(np.abs(sin_plus_cos))
+    #term1.append(np.abs(sin_minus_cos))
 
-    tt2 = []
-    tt2.append(sin_p/ss)
-    tt2.append(cos_p/ ss)
-    tt2.append(sin_minus_cos/ ss)
-    tt2.append(sin_plus_cos/ ss)
-    tt2.extend([-tt2[0], -tt2[1], -tt2[2], -tt2[3]])
+    term1 = np.array([[1.00000000e+00, 9.99847695e-01, 9.99390827e-01, 9.98629535e-01,9.97564050e-01, 9.96194698e-01, 9.94521895e-01, 9.92546152e-01,9.90268069e-01, 9.87688341e-01, 9.84807753e-01, 9.81627183e-01,9.78147601e-01, 9.74370065e-01, 9.70295726e-01, 9.65925826e-01,9.61261696e-01, 9.56304756e-01, 9.51056516e-01, 9.45518576e-01,9.39692621e-01, 9.33580426e-01, 9.27183855e-01, 9.20504853e-01,9.13545458e-01, 9.06307787e-01, 8.98794046e-01, 8.91006524e-01,8.82947593e-01, 8.74619707e-01, 8.66025404e-01, 8.57167301e-01,8.48048096e-01, 8.38670568e-01, 8.29037573e-01, 8.19152044e-01,8.09016994e-01, 7.98635510e-01, 7.88010754e-01, 7.77145961e-01,7.66044443e-01, 7.54709580e-01, 7.43144825e-01, 7.31353702e-01,7.19339800e-01, 7.07106781e-01, 6.94658370e-01, 6.81998360e-01,6.69130606e-01, 6.56059029e-01, 6.42787610e-01, 6.29320391e-01,6.15661475e-01, 6.01815023e-01, 5.87785252e-01, 5.73576436e-01,5.59192903e-01, 5.44639035e-01, 5.29919264e-01, 5.15038075e-01,5.00000000e-01, 4.84809620e-01, 4.69471563e-01, 4.53990500e-01,4.38371147e-01, 4.22618262e-01, 4.06736643e-01, 3.90731128e-01,3.74606593e-01, 3.58367950e-01, 3.42020143e-01, 3.25568154e-01,3.09016994e-01, 2.92371705e-01, 2.75637356e-01, 2.58819045e-01,2.41921896e-01, 2.24951054e-01, 2.07911691e-01, 1.90808995e-01,1.73648178e-01, 1.56434465e-01, 1.39173101e-01, 1.21869343e-01,1.04528463e-01, 8.71557427e-02, 6.97564737e-02, 5.23359562e-02,3.48994967e-02, 1.74524064e-02, 6.12323400e-17, 1.74524064e-02,3.48994967e-02, 5.23359562e-02, 6.97564737e-02, 8.71557427e-02,1.04528463e-01, 1.21869343e-01, 1.39173101e-01, 1.56434465e-01,1.73648178e-01, 1.90808995e-01, 2.07911691e-01, 2.24951054e-01,2.41921896e-01, 2.58819045e-01, 2.75637356e-01, 2.92371705e-01,3.09016994e-01, 3.25568154e-01, 3.42020143e-01, 3.58367950e-01,3.74606593e-01, 3.90731128e-01, 4.06736643e-01, 4.22618262e-01,4.38371147e-01, 4.53990500e-01, 4.69471563e-01, 4.84809620e-01,5.00000000e-01, 5.15038075e-01, 5.29919264e-01, 5.44639035e-01,5.59192903e-01, 5.73576436e-01, 5.87785252e-01, 6.01815023e-01,6.15661475e-01, 6.29320391e-01, 6.42787610e-01, 6.56059029e-01,6.69130606e-01, 6.81998360e-01, 6.94658370e-01, 7.07106781e-01,7.19339800e-01, 7.31353702e-01, 7.43144825e-01, 7.54709580e-01,7.66044443e-01, 7.77145961e-01, 7.88010754e-01, 7.98635510e-01,8.09016994e-01, 8.19152044e-01, 8.29037573e-01, 8.38670568e-01,8.48048096e-01, 8.57167301e-01, 8.66025404e-01, 8.74619707e-01,8.82947593e-01, 8.91006524e-01, 8.98794046e-01, 9.06307787e-01,9.13545458e-01, 9.20504853e-01, 9.27183855e-01, 9.33580426e-01,9.39692621e-01, 9.45518576e-01, 9.51056516e-01, 9.56304756e-01,9.61261696e-01, 9.65925826e-01, 9.70295726e-01, 9.74370065e-01,9.78147601e-01, 9.81627183e-01, 9.84807753e-01, 9.87688341e-01,9.90268069e-01, 9.92546152e-01, 9.94521895e-01, 9.96194698e-01,9.97564050e-01, 9.98629535e-01, 9.99390827e-01, 9.99847695e-01,1.00000000e+00, 9.99847695e-01, 9.99390827e-01, 9.98629535e-01,9.97564050e-01, 9.96194698e-01, 9.94521895e-01, 9.92546152e-01,9.90268069e-01, 9.87688341e-01, 9.84807753e-01, 9.81627183e-01,9.78147601e-01, 9.74370065e-01, 9.70295726e-01, 9.65925826e-01,9.61261696e-01, 9.56304756e-01, 9.51056516e-01, 9.45518576e-01,9.39692621e-01, 9.33580426e-01, 9.27183855e-01, 9.20504853e-01,9.13545458e-01, 9.06307787e-01, 8.98794046e-01, 8.91006524e-01,8.82947593e-01, 8.74619707e-01, 8.66025404e-01, 8.57167301e-01,8.48048096e-01, 8.38670568e-01, 8.29037573e-01, 8.19152044e-01,8.09016994e-01, 7.98635510e-01, 7.88010754e-01, 7.77145961e-01,7.66044443e-01, 7.54709580e-01, 7.43144825e-01, 7.31353702e-01,7.19339800e-01, 7.07106781e-01, 6.94658370e-01, 6.81998360e-01,6.69130606e-01, 6.56059029e-01, 6.42787610e-01, 6.29320391e-01,6.15661475e-01, 6.01815023e-01, 5.87785252e-01, 5.73576436e-01,5.59192903e-01, 5.44639035e-01, 5.29919264e-01, 5.15038075e-01,5.00000000e-01, 4.84809620e-01, 4.69471563e-01, 4.53990500e-01,4.38371147e-01, 4.22618262e-01, 4.06736643e-01, 3.90731128e-01,3.74606593e-01, 3.58367950e-01, 3.42020143e-01, 3.25568154e-01,3.09016994e-01, 2.92371705e-01, 2.75637356e-01, 2.58819045e-01,2.41921896e-01, 2.24951054e-01, 2.07911691e-01, 1.90808995e-01,1.73648178e-01, 1.56434465e-01, 1.39173101e-01, 1.21869343e-01,1.04528463e-01, 8.71557427e-02, 6.97564737e-02, 5.23359562e-02,3.48994967e-02, 1.74524064e-02, 1.83697020e-16, 1.74524064e-02,3.48994967e-02, 5.23359562e-02, 6.97564737e-02, 8.71557427e-02,1.04528463e-01, 1.21869343e-01, 1.39173101e-01, 1.56434465e-01,1.73648178e-01, 1.90808995e-01, 2.07911691e-01, 2.24951054e-01,2.41921896e-01, 2.58819045e-01, 2.75637356e-01, 2.92371705e-01,3.09016994e-01, 3.25568154e-01, 3.42020143e-01, 3.58367950e-01,3.74606593e-01, 3.90731128e-01, 4.06736643e-01, 4.22618262e-01,4.38371147e-01, 4.53990500e-01, 4.69471563e-01, 4.84809620e-01,5.00000000e-01, 5.15038075e-01, 5.29919264e-01, 5.44639035e-01,5.59192903e-01, 5.73576436e-01, 5.87785252e-01, 6.01815023e-01,6.15661475e-01, 6.29320391e-01, 6.42787610e-01, 6.56059029e-01,6.69130606e-01, 6.81998360e-01, 6.94658370e-01, 7.07106781e-01,7.19339800e-01, 7.31353702e-01, 7.43144825e-01, 7.54709580e-01,7.66044443e-01, 7.77145961e-01, 7.88010754e-01, 7.98635510e-01,8.09016994e-01, 8.19152044e-01, 8.29037573e-01, 8.38670568e-01,8.48048096e-01, 8.57167301e-01, 8.66025404e-01, 8.74619707e-01,8.82947593e-01, 8.91006524e-01, 8.98794046e-01, 9.06307787e-01,9.13545458e-01, 9.20504853e-01, 9.27183855e-01, 9.33580426e-01,9.39692621e-01, 9.45518576e-01, 9.51056516e-01, 9.56304756e-01,9.61261696e-01, 9.65925826e-01, 9.70295726e-01, 9.74370065e-01,9.78147601e-01, 9.81627183e-01, 9.84807753e-01, 9.87688341e-01,9.90268069e-01, 9.92546152e-01, 9.94521895e-01, 9.96194698e-01,9.97564050e-01, 9.98629535e-01, 9.99390827e-01, 9.99847695e-01],
+                      [0.00000000e+00, 1.74524064e-02, 3.48994967e-02, 5.23359562e-02,6.97564737e-02, 8.71557427e-02, 1.04528463e-01, 1.21869343e-01,1.39173101e-01, 1.56434465e-01, 1.73648178e-01, 1.90808995e-01,2.07911691e-01, 2.24951054e-01, 2.41921896e-01, 2.58819045e-01,2.75637356e-01, 2.92371705e-01, 3.09016994e-01, 3.25568154e-01,3.42020143e-01, 3.58367950e-01, 3.74606593e-01, 3.90731128e-01,4.06736643e-01, 4.22618262e-01, 4.38371147e-01, 4.53990500e-01,4.69471563e-01, 4.84809620e-01, 5.00000000e-01, 5.15038075e-01,5.29919264e-01, 5.44639035e-01, 5.59192903e-01, 5.73576436e-01,5.87785252e-01, 6.01815023e-01, 6.15661475e-01, 6.29320391e-01,6.42787610e-01, 6.56059029e-01, 6.69130606e-01, 6.81998360e-01,6.94658370e-01, 7.07106781e-01, 7.19339800e-01, 7.31353702e-01,7.43144825e-01, 7.54709580e-01, 7.66044443e-01, 7.77145961e-01,7.88010754e-01, 7.98635510e-01, 8.09016994e-01, 8.19152044e-01,8.29037573e-01, 8.38670568e-01, 8.48048096e-01, 8.57167301e-01,8.66025404e-01, 8.74619707e-01, 8.82947593e-01, 8.91006524e-01,8.98794046e-01, 9.06307787e-01, 9.13545458e-01, 9.20504853e-01,9.27183855e-01, 9.33580426e-01, 9.39692621e-01, 9.45518576e-01,9.51056516e-01, 9.56304756e-01, 9.61261696e-01, 9.65925826e-01,9.70295726e-01, 9.74370065e-01, 9.78147601e-01, 9.81627183e-01,9.84807753e-01, 9.87688341e-01, 9.90268069e-01, 9.92546152e-01,9.94521895e-01, 9.96194698e-01, 9.97564050e-01, 9.98629535e-01,9.99390827e-01, 9.99847695e-01, 1.00000000e+00, 9.99847695e-01,9.99390827e-01, 9.98629535e-01, 9.97564050e-01, 9.96194698e-01,9.94521895e-01, 9.92546152e-01, 9.90268069e-01, 9.87688341e-01,9.84807753e-01, 9.81627183e-01, 9.78147601e-01, 9.74370065e-01,9.70295726e-01, 9.65925826e-01, 9.61261696e-01, 9.56304756e-01,9.51056516e-01, 9.45518576e-01, 9.39692621e-01, 9.33580426e-01,9.27183855e-01, 9.20504853e-01, 9.13545458e-01, 9.06307787e-01,8.98794046e-01, 8.91006524e-01, 8.82947593e-01, 8.74619707e-01,8.66025404e-01, 8.57167301e-01, 8.48048096e-01, 8.38670568e-01,8.29037573e-01, 8.19152044e-01, 8.09016994e-01, 7.98635510e-01,7.88010754e-01, 7.77145961e-01, 7.66044443e-01, 7.54709580e-01,7.43144825e-01, 7.31353702e-01, 7.19339800e-01, 7.07106781e-01,6.94658370e-01, 6.81998360e-01, 6.69130606e-01, 6.56059029e-01,6.42787610e-01, 6.29320391e-01, 6.15661475e-01, 6.01815023e-01,5.87785252e-01, 5.73576436e-01, 5.59192903e-01, 5.44639035e-01,5.29919264e-01, 5.15038075e-01, 5.00000000e-01, 4.84809620e-01,4.69471563e-01, 4.53990500e-01, 4.38371147e-01, 4.22618262e-01,4.06736643e-01, 3.90731128e-01, 3.74606593e-01, 3.58367950e-01,3.42020143e-01, 3.25568154e-01, 3.09016994e-01, 2.92371705e-01,2.75637356e-01, 2.58819045e-01, 2.41921896e-01, 2.24951054e-01,2.07911691e-01, 1.90808995e-01, 1.73648178e-01, 1.56434465e-01,1.39173101e-01, 1.21869343e-01, 1.04528463e-01, 8.71557427e-02,6.97564737e-02, 5.23359562e-02, 3.48994967e-02, 1.74524064e-02,1.22464680e-16, 1.74524064e-02, 3.48994967e-02, 5.23359562e-02,6.97564737e-02, 8.71557427e-02, 1.04528463e-01, 1.21869343e-01,1.39173101e-01, 1.56434465e-01, 1.73648178e-01, 1.90808995e-01,2.07911691e-01, 2.24951054e-01, 2.41921896e-01, 2.58819045e-01,2.75637356e-01, 2.92371705e-01, 3.09016994e-01, 3.25568154e-01,3.42020143e-01, 3.58367950e-01, 3.74606593e-01, 3.90731128e-01,4.06736643e-01, 4.22618262e-01, 4.38371147e-01, 4.53990500e-01,4.69471563e-01, 4.84809620e-01, 5.00000000e-01, 5.15038075e-01,5.29919264e-01, 5.44639035e-01, 5.59192903e-01, 5.73576436e-01,5.87785252e-01, 6.01815023e-01, 6.15661475e-01, 6.29320391e-01,6.42787610e-01, 6.56059029e-01, 6.69130606e-01, 6.81998360e-01,6.94658370e-01, 7.07106781e-01, 7.19339800e-01, 7.31353702e-01,7.43144825e-01, 7.54709580e-01, 7.66044443e-01, 7.77145961e-01,7.88010754e-01, 7.98635510e-01, 8.09016994e-01, 8.19152044e-01,8.29037573e-01, 8.38670568e-01, 8.48048096e-01, 8.57167301e-01,8.66025404e-01, 8.74619707e-01, 8.82947593e-01, 8.91006524e-01,8.98794046e-01, 9.06307787e-01, 9.13545458e-01, 9.20504853e-01,9.27183855e-01, 9.33580426e-01, 9.39692621e-01, 9.45518576e-01,9.51056516e-01, 9.56304756e-01, 9.61261696e-01, 9.65925826e-01,9.70295726e-01, 9.74370065e-01, 9.78147601e-01, 9.81627183e-01,9.84807753e-01, 9.87688341e-01, 9.90268069e-01, 9.92546152e-01,9.94521895e-01, 9.96194698e-01, 9.97564050e-01, 9.98629535e-01,9.99390827e-01, 9.99847695e-01, 1.00000000e+00, 9.99847695e-01,9.99390827e-01, 9.98629535e-01, 9.97564050e-01, 9.96194698e-01,9.94521895e-01, 9.92546152e-01, 9.90268069e-01, 9.87688341e-01,9.84807753e-01, 9.81627183e-01, 9.78147601e-01, 9.74370065e-01,9.70295726e-01, 9.65925826e-01, 9.61261696e-01, 9.56304756e-01,9.51056516e-01, 9.45518576e-01, 9.39692621e-01, 9.33580426e-01,9.27183855e-01, 9.20504853e-01, 9.13545458e-01, 9.06307787e-01,8.98794046e-01, 8.91006524e-01, 8.82947593e-01, 8.74619707e-01,8.66025404e-01, 8.57167301e-01, 8.48048096e-01, 8.38670568e-01,8.29037573e-01, 8.19152044e-01, 8.09016994e-01, 7.98635510e-01,7.88010754e-01, 7.77145961e-01, 7.66044443e-01, 7.54709580e-01,7.43144825e-01, 7.31353702e-01, 7.19339800e-01, 7.07106781e-01,6.94658370e-01, 6.81998360e-01, 6.69130606e-01, 6.56059029e-01,6.42787610e-01, 6.29320391e-01, 6.15661475e-01, 6.01815023e-01,5.87785252e-01, 5.73576436e-01, 5.59192903e-01, 5.44639035e-01,5.29919264e-01, 5.15038075e-01, 5.00000000e-01, 4.84809620e-01,4.69471563e-01, 4.53990500e-01, 4.38371147e-01, 4.22618262e-01,4.06736643e-01, 3.90731128e-01, 3.74606593e-01, 3.58367950e-01,3.42020143e-01, 3.25568154e-01, 3.09016994e-01, 2.92371705e-01,2.75637356e-01, 2.58819045e-01, 2.41921896e-01, 2.24951054e-01,2.07911691e-01, 1.90808995e-01, 1.73648178e-01, 1.56434465e-01,1.39173101e-01, 1.21869343e-01, 1.04528463e-01, 8.71557427e-02,6.97564737e-02, 5.23359562e-02, 3.48994967e-02, 1.74524064e-02],
+                      [1.00000000e+00, 1.01730010e+00, 1.03429032e+00, 1.05096549e+00,1.06732052e+00, 1.08335044e+00, 1.09905036e+00, 1.11441550e+00,1.12944117e+00, 1.14412281e+00, 1.15845593e+00, 1.17243618e+00,1.18605929e+00, 1.19932112e+00, 1.21221762e+00, 1.22474487e+00,1.23689905e+00, 1.24867646e+00, 1.26007351e+00, 1.27108673e+00,1.28171276e+00, 1.29194838e+00, 1.30179045e+00, 1.31123598e+00,1.32028210e+00, 1.32892605e+00, 1.33716519e+00, 1.34499702e+00,1.35241916e+00, 1.35942933e+00, 1.36602540e+00, 1.37220538e+00,1.37796736e+00, 1.38330960e+00, 1.38823048e+00, 1.39272848e+00,1.39680225e+00, 1.40045053e+00, 1.40367223e+00, 1.40646635e+00,1.40883205e+00, 1.41076861e+00, 1.41227543e+00, 1.41335206e+00,1.41399817e+00, 1.41421356e+00, 1.41399817e+00, 1.41335206e+00,1.41227543e+00, 1.41076861e+00, 1.40883205e+00, 1.40646635e+00,1.40367223e+00, 1.40045053e+00, 1.39680225e+00, 1.39272848e+00,1.38823048e+00, 1.38330960e+00, 1.37796736e+00, 1.37220538e+00,1.36602540e+00, 1.35942933e+00, 1.35241916e+00, 1.34499702e+00,1.33716519e+00, 1.32892605e+00, 1.32028210e+00, 1.31123598e+00,1.30179045e+00, 1.29194838e+00, 1.28171276e+00, 1.27108673e+00,1.26007351e+00, 1.24867646e+00, 1.23689905e+00, 1.22474487e+00,1.21221762e+00, 1.19932112e+00, 1.18605929e+00, 1.17243618e+00,1.15845593e+00, 1.14412281e+00, 1.12944117e+00, 1.11441550e+00,1.09905036e+00, 1.08335044e+00, 1.06732052e+00, 1.05096549e+00,1.03429032e+00, 1.01730010e+00, 1.00000000e+00, 9.82395289e-01,9.64491330e-01, 9.46293579e-01, 9.27807577e-01, 9.09038955e-01,8.89993432e-01, 8.70676808e-01, 8.51094968e-01, 8.31253876e-01,8.11159575e-01, 7.90818188e-01, 7.70235910e-01, 7.49419010e-01,7.28373831e-01, 7.07106781e-01, 6.85624340e-01, 6.63933051e-01,6.42039522e-01, 6.19950421e-01, 5.97672477e-01, 5.75212477e-01,5.52577261e-01, 5.29773725e-01, 5.06808815e-01, 4.83689525e-01,4.60422900e-01, 4.37016024e-01, 4.13476030e-01, 3.89810087e-01,3.66025404e-01, 3.42129226e-01, 3.18128832e-01, 2.94031533e-01,2.69844669e-01, 2.45575608e-01, 2.21231742e-01, 1.96820487e-01,1.72349278e-01, 1.47825570e-01, 1.23256833e-01, 9.86505512e-02,7.40142191e-02, 4.93553416e-02, 2.46814299e-02, 1.11022302e-16,2.46814299e-02, 4.93553416e-02, 7.40142191e-02, 9.86505512e-02,1.23256833e-01, 1.47825570e-01, 1.72349278e-01, 1.96820487e-01,2.21231742e-01, 2.45575608e-01, 2.69844669e-01, 2.94031533e-01,3.18128832e-01, 3.42129226e-01, 3.66025404e-01, 3.89810087e-01,4.13476030e-01, 4.37016024e-01, 4.60422900e-01, 4.83689525e-01,5.06808815e-01, 5.29773725e-01, 5.52577261e-01, 5.75212477e-01,5.97672477e-01, 6.19950421e-01, 6.42039522e-01, 6.63933051e-01,6.85624340e-01, 7.07106781e-01, 7.28373831e-01, 7.49419010e-01,7.70235910e-01, 7.90818188e-01, 8.11159575e-01, 8.31253876e-01,8.51094968e-01, 8.70676808e-01, 8.89993432e-01, 9.09038955e-01,9.27807577e-01, 9.46293579e-01, 9.64491330e-01, 9.82395289e-01,1.00000000e+00, 1.01730010e+00, 1.03429032e+00, 1.05096549e+00,1.06732052e+00, 1.08335044e+00, 1.09905036e+00, 1.11441550e+00,1.12944117e+00, 1.14412281e+00, 1.15845593e+00, 1.17243618e+00,1.18605929e+00, 1.19932112e+00, 1.21221762e+00, 1.22474487e+00,1.23689905e+00, 1.24867646e+00, 1.26007351e+00, 1.27108673e+00,1.28171276e+00, 1.29194838e+00, 1.30179045e+00, 1.31123598e+00,1.32028210e+00, 1.32892605e+00, 1.33716519e+00, 1.34499702e+00,1.35241916e+00, 1.35942933e+00, 1.36602540e+00, 1.37220538e+00,1.37796736e+00, 1.38330960e+00, 1.38823048e+00, 1.39272848e+00,1.39680225e+00, 1.40045053e+00, 1.40367223e+00, 1.40646635e+00,1.40883205e+00, 1.41076861e+00, 1.41227543e+00, 1.41335206e+00,1.41399817e+00, 1.41421356e+00, 1.41399817e+00, 1.41335206e+00,1.41227543e+00, 1.41076861e+00, 1.40883205e+00, 1.40646635e+00,1.40367223e+00, 1.40045053e+00, 1.39680225e+00, 1.39272848e+00,1.38823048e+00, 1.38330960e+00, 1.37796736e+00, 1.37220538e+00,1.36602540e+00, 1.35942933e+00, 1.35241916e+00, 1.34499702e+00,1.33716519e+00, 1.32892605e+00, 1.32028210e+00, 1.31123598e+00,1.30179045e+00, 1.29194838e+00, 1.28171276e+00, 1.27108673e+00,1.26007351e+00, 1.24867646e+00, 1.23689905e+00, 1.22474487e+00,1.21221762e+00, 1.19932112e+00, 1.18605929e+00, 1.17243618e+00,1.15845593e+00, 1.14412281e+00, 1.12944117e+00, 1.11441550e+00,1.09905036e+00, 1.08335044e+00, 1.06732052e+00, 1.05096549e+00,1.03429032e+00, 1.01730010e+00, 1.00000000e+00, 9.82395289e-01,9.64491330e-01, 9.46293579e-01, 9.27807577e-01, 9.09038955e-01,8.89993432e-01, 8.70676808e-01, 8.51094968e-01, 8.31253876e-01,8.11159575e-01, 7.90818188e-01, 7.70235910e-01, 7.49419010e-01,7.28373831e-01, 7.07106781e-01, 6.85624340e-01, 6.63933051e-01,6.42039522e-01, 6.19950421e-01, 5.97672477e-01, 5.75212477e-01,5.52577261e-01, 5.29773725e-01, 5.06808815e-01, 4.83689525e-01,4.60422900e-01, 4.37016024e-01, 4.13476030e-01, 3.89810087e-01,3.66025404e-01, 3.42129226e-01, 3.18128832e-01, 2.94031533e-01,2.69844669e-01, 2.45575608e-01, 2.21231742e-01, 1.96820487e-01,1.72349278e-01, 1.47825570e-01, 1.23256833e-01, 9.86505512e-02,7.40142191e-02, 4.93553416e-02, 2.46814299e-02, 3.33066907e-16,2.46814299e-02, 4.93553416e-02, 7.40142191e-02, 9.86505512e-02,1.23256833e-01, 1.47825570e-01, 1.72349278e-01, 1.96820487e-01,2.21231742e-01, 2.45575608e-01, 2.69844669e-01, 2.94031533e-01,3.18128832e-01, 3.42129226e-01, 3.66025404e-01, 3.89810087e-01,4.13476030e-01, 4.37016024e-01, 4.60422900e-01, 4.83689525e-01,5.06808815e-01, 5.29773725e-01, 5.52577261e-01, 5.75212477e-01,5.97672477e-01, 6.19950421e-01, 6.42039522e-01, 6.63933051e-01,6.85624340e-01, 7.07106781e-01, 7.28373831e-01, 7.49419010e-01,7.70235910e-01, 7.90818188e-01, 8.11159575e-01, 8.31253876e-01,8.51094968e-01, 8.70676808e-01, 8.89993432e-01, 9.09038955e-01,9.27807577e-01, 9.46293579e-01, 9.64491330e-01, 9.82395289e-01],
+                      [1.00000000e+00, 9.82395289e-01, 9.64491330e-01, 9.46293579e-01,9.27807577e-01, 9.09038955e-01, 8.89993432e-01, 8.70676808e-01,8.51094968e-01, 8.31253876e-01, 8.11159575e-01, 7.90818188e-01,7.70235910e-01, 7.49419010e-01, 7.28373831e-01, 7.07106781e-01,6.85624340e-01, 6.63933051e-01, 6.42039522e-01, 6.19950421e-01,5.97672477e-01, 5.75212477e-01, 5.52577261e-01, 5.29773725e-01,5.06808815e-01, 4.83689525e-01, 4.60422900e-01, 4.37016024e-01,4.13476030e-01, 3.89810087e-01, 3.66025404e-01, 3.42129226e-01,3.18128832e-01, 2.94031533e-01, 2.69844669e-01, 2.45575608e-01,2.21231742e-01, 1.96820487e-01, 1.72349278e-01, 1.47825570e-01,1.23256833e-01, 9.86505512e-02, 7.40142191e-02, 4.93553416e-02,2.46814299e-02, 1.11022302e-16, 2.46814299e-02, 4.93553416e-02,7.40142191e-02, 9.86505512e-02, 1.23256833e-01, 1.47825570e-01,1.72349278e-01, 1.96820487e-01, 2.21231742e-01, 2.45575608e-01,2.69844669e-01, 2.94031533e-01, 3.18128832e-01, 3.42129226e-01,3.66025404e-01, 3.89810087e-01, 4.13476030e-01, 4.37016024e-01,4.60422900e-01, 4.83689525e-01, 5.06808815e-01, 5.29773725e-01,5.52577261e-01, 5.75212477e-01, 5.97672477e-01, 6.19950421e-01,6.42039522e-01, 6.63933051e-01, 6.85624340e-01, 7.07106781e-01,7.28373831e-01, 7.49419010e-01, 7.70235910e-01, 7.90818188e-01,8.11159575e-01, 8.31253876e-01, 8.51094968e-01, 8.70676808e-01,8.89993432e-01, 9.09038955e-01, 9.27807577e-01, 9.46293579e-01,9.64491330e-01, 9.82395289e-01, 1.00000000e+00, 1.01730010e+00,1.03429032e+00, 1.05096549e+00, 1.06732052e+00, 1.08335044e+00,1.09905036e+00, 1.11441550e+00, 1.12944117e+00, 1.14412281e+00,1.15845593e+00, 1.17243618e+00, 1.18605929e+00, 1.19932112e+00,1.21221762e+00, 1.22474487e+00, 1.23689905e+00, 1.24867646e+00,1.26007351e+00, 1.27108673e+00, 1.28171276e+00, 1.29194838e+00,1.30179045e+00, 1.31123598e+00, 1.32028210e+00, 1.32892605e+00,1.33716519e+00, 1.34499702e+00, 1.35241916e+00, 1.35942933e+00,1.36602540e+00, 1.37220538e+00, 1.37796736e+00, 1.38330960e+00,1.38823048e+00, 1.39272848e+00, 1.39680225e+00, 1.40045053e+00,1.40367223e+00, 1.40646635e+00, 1.40883205e+00, 1.41076861e+00,1.41227543e+00, 1.41335206e+00, 1.41399817e+00, 1.41421356e+00,1.41399817e+00, 1.41335206e+00, 1.41227543e+00, 1.41076861e+00,1.40883205e+00, 1.40646635e+00, 1.40367223e+00, 1.40045053e+00,1.39680225e+00, 1.39272848e+00, 1.38823048e+00, 1.38330960e+00,1.37796736e+00, 1.37220538e+00, 1.36602540e+00, 1.35942933e+00,1.35241916e+00, 1.34499702e+00, 1.33716519e+00, 1.32892605e+00,1.32028210e+00, 1.31123598e+00, 1.30179045e+00, 1.29194838e+00,1.28171276e+00, 1.27108673e+00, 1.26007351e+00, 1.24867646e+00,1.23689905e+00, 1.22474487e+00, 1.21221762e+00, 1.19932112e+00,1.18605929e+00, 1.17243618e+00, 1.15845593e+00, 1.14412281e+00,1.12944117e+00, 1.11441550e+00, 1.09905036e+00, 1.08335044e+00,1.06732052e+00, 1.05096549e+00, 1.03429032e+00, 1.01730010e+00,1.00000000e+00, 9.82395289e-01, 9.64491330e-01, 9.46293579e-01,9.27807577e-01, 9.09038955e-01, 8.89993432e-01, 8.70676808e-01,8.51094968e-01, 8.31253876e-01, 8.11159575e-01, 7.90818188e-01,7.70235910e-01, 7.49419010e-01, 7.28373831e-01, 7.07106781e-01,6.85624340e-01, 6.63933051e-01, 6.42039522e-01, 6.19950421e-01,5.97672477e-01, 5.75212477e-01, 5.52577261e-01, 5.29773725e-01,5.06808815e-01, 4.83689525e-01, 4.60422900e-01, 4.37016024e-01,4.13476030e-01, 3.89810087e-01, 3.66025404e-01, 3.42129226e-01,3.18128832e-01, 2.94031533e-01, 2.69844669e-01, 2.45575608e-01,2.21231742e-01, 1.96820487e-01, 1.72349278e-01, 1.47825570e-01,1.23256833e-01, 9.86505512e-02, 7.40142191e-02, 4.93553416e-02,2.46814299e-02, 2.22044605e-16, 2.46814299e-02, 4.93553416e-02,7.40142191e-02, 9.86505512e-02, 1.23256833e-01, 1.47825570e-01,1.72349278e-01, 1.96820487e-01, 2.21231742e-01, 2.45575608e-01,2.69844669e-01, 2.94031533e-01, 3.18128832e-01, 3.42129226e-01,3.66025404e-01, 3.89810087e-01, 4.13476030e-01, 4.37016024e-01,4.60422900e-01, 4.83689525e-01, 5.06808815e-01, 5.29773725e-01,5.52577261e-01, 5.75212477e-01, 5.97672477e-01, 6.19950421e-01,6.42039522e-01, 6.63933051e-01, 6.85624340e-01, 7.07106781e-01,7.28373831e-01, 7.49419010e-01, 7.70235910e-01, 7.90818188e-01,8.11159575e-01, 8.31253876e-01, 8.51094968e-01, 8.70676808e-01,8.89993432e-01, 9.09038955e-01, 9.27807577e-01, 9.46293579e-01,9.64491330e-01, 9.82395289e-01, 1.00000000e+00, 1.01730010e+00,1.03429032e+00, 1.05096549e+00, 1.06732052e+00, 1.08335044e+00,1.09905036e+00, 1.11441550e+00, 1.12944117e+00, 1.14412281e+00,1.15845593e+00, 1.17243618e+00, 1.18605929e+00, 1.19932112e+00,1.21221762e+00, 1.22474487e+00, 1.23689905e+00, 1.24867646e+00,1.26007351e+00, 1.27108673e+00, 1.28171276e+00, 1.29194838e+00,1.30179045e+00, 1.31123598e+00, 1.32028210e+00, 1.32892605e+00,1.33716519e+00, 1.34499702e+00, 1.35241916e+00, 1.35942933e+00,1.36602540e+00, 1.37220538e+00, 1.37796736e+00, 1.38330960e+00,1.38823048e+00, 1.39272848e+00, 1.39680225e+00, 1.40045053e+00,1.40367223e+00, 1.40646635e+00, 1.40883205e+00, 1.41076861e+00,1.41227543e+00, 1.41335206e+00, 1.41399817e+00, 1.41421356e+00,1.41399817e+00, 1.41335206e+00, 1.41227543e+00, 1.41076861e+00,1.40883205e+00, 1.40646635e+00, 1.40367223e+00, 1.40045053e+00,1.39680225e+00, 1.39272848e+00, 1.38823048e+00, 1.38330960e+00,1.37796736e+00, 1.37220538e+00, 1.36602540e+00, 1.35942933e+00,1.35241916e+00, 1.34499702e+00, 1.33716519e+00, 1.32892605e+00,1.32028210e+00, 1.31123598e+00, 1.30179045e+00, 1.29194838e+00,1.28171276e+00, 1.27108673e+00, 1.26007351e+00, 1.24867646e+00,1.23689905e+00, 1.22474487e+00, 1.21221762e+00, 1.19932112e+00,1.18605929e+00, 1.17243618e+00, 1.15845593e+00, 1.14412281e+00,1.12944117e+00, 1.11441550e+00, 1.09905036e+00, 1.08335044e+00,1.06732052e+00, 1.05096549e+00, 1.03429032e+00, 1.01730010e+00]
+                     ])
+    term1 = np.row_stack((term1, term1))
 
-    term2 = []
-    for t2_item in tt2:
-        term2.append(ss * (1 - t2_item + t2_item ** 2))
+    #tt2 = []
+    #tt2.append(sin_p/ss)
+    #tt2.append(cos_p/ ss)
+    #tt2.append(sin_minus_cos/ ss)
+    #tt2.append(sin_plus_cos/ ss)
+    #tt2.extend([-tt2[0], -tt2[1], -tt2[2], -tt2[3]])
 
-    case_value = []
-    for c_i in range(8):
-        case_value.append((1/ ss ** 2) * term1[c_i%4] * term2[c_i])
+    tt2 = np.array([
+        [ 0.00000000e+00,  1.74524064e-02,  3.48994967e-02,  5.23359562e-02, 6.97564737e-02,  8.71557427e-02,  1.04528463e-01,  1.21869343e-01, 1.39173101e-01,  1.56434465e-01,  1.73648178e-01,  1.90808995e-01, 2.07911691e-01,  2.24951054e-01,  2.41921896e-01,  2.58819045e-01, 2.75637356e-01,  2.92371705e-01,  3.09016994e-01,  3.25568154e-01, 3.42020143e-01,  3.58367950e-01,  3.74606593e-01,  3.90731128e-01, 4.06736643e-01,  4.22618262e-01,  4.38371147e-01,  4.53990500e-01, 4.69471563e-01,  4.84809620e-01,  5.00000000e-01,  5.15038075e-01, 5.29919264e-01,  5.44639035e-01,  5.59192903e-01,  5.73576436e-01, 5.87785252e-01,  6.01815023e-01,  6.15661475e-01,  6.29320391e-01, 6.42787610e-01,  6.56059029e-01,  6.69130606e-01,  6.81998360e-01, 6.94658370e-01,  7.07106781e-01,  7.19339800e-01,  7.31353702e-01, 7.43144825e-01,  7.54709580e-01,  7.66044443e-01,  7.77145961e-01, 7.88010754e-01,  7.98635510e-01,  8.09016994e-01,  8.19152044e-01, 8.29037573e-01,  8.38670568e-01,  8.48048096e-01,  8.57167301e-01, 8.66025404e-01,  8.74619707e-01,  8.82947593e-01,  8.91006524e-01, 8.98794046e-01,  9.06307787e-01,  9.13545458e-01,  9.20504853e-01, 9.27183855e-01,  9.33580426e-01,  9.39692621e-01,  9.45518576e-01, 9.51056516e-01,  9.56304756e-01,  9.61261696e-01,  9.65925826e-01, 9.70295726e-01,  9.74370065e-01,  9.78147601e-01,  9.81627183e-01, 9.84807753e-01,  9.87688341e-01,  9.90268069e-01,  9.92546152e-01, 9.94521895e-01,  9.96194698e-01,  9.97564050e-01,  9.98629535e-01, 9.99390827e-01,  9.99847695e-01,  1.00000000e+00,  9.99847695e-01, 9.99390827e-01,  9.98629535e-01,  9.97564050e-01,  9.96194698e-01, 9.94521895e-01,  9.92546152e-01,  9.90268069e-01,  9.87688341e-01, 9.84807753e-01,  9.81627183e-01,  9.78147601e-01,  9.74370065e-01, 9.70295726e-01,  9.65925826e-01,  9.61261696e-01,  9.56304756e-01, 9.51056516e-01,  9.45518576e-01,  9.39692621e-01,  9.33580426e-01, 9.27183855e-01,  9.20504853e-01,  9.13545458e-01,  9.06307787e-01, 8.98794046e-01,  8.91006524e-01,  8.82947593e-01,  8.74619707e-01, 8.66025404e-01,  8.57167301e-01,  8.48048096e-01,  8.38670568e-01, 8.29037573e-01,  8.19152044e-01,  8.09016994e-01,  7.98635510e-01, 7.88010754e-01,  7.77145961e-01,  7.66044443e-01,  7.54709580e-01, 7.43144825e-01,  7.31353702e-01,  7.19339800e-01,  7.07106781e-01, 6.94658370e-01,  6.81998360e-01,  6.69130606e-01,  6.56059029e-01, 6.42787610e-01,  6.29320391e-01,  6.15661475e-01,  6.01815023e-01, 5.87785252e-01,  5.73576436e-01,  5.59192903e-01,  5.44639035e-01, 5.29919264e-01,  5.15038075e-01,  5.00000000e-01,  4.84809620e-01, 4.69471563e-01,  4.53990500e-01,  4.38371147e-01,  4.22618262e-01, 4.06736643e-01,  3.90731128e-01,  3.74606593e-01,  3.58367950e-01, 3.42020143e-01,  3.25568154e-01,  3.09016994e-01,  2.92371705e-01, 2.75637356e-01,  2.58819045e-01,  2.41921896e-01,  2.24951054e-01, 2.07911691e-01,  1.90808995e-01,  1.73648178e-01,  1.56434465e-01, 1.39173101e-01,  1.21869343e-01,  1.04528463e-01,  8.71557427e-02, 6.97564737e-02,  5.23359562e-02,  3.48994967e-02,  1.74524064e-02, 1.22464680e-16, -1.74524064e-02, -3.48994967e-02, -5.23359562e-02,-6.97564737e-02, -8.71557427e-02, -1.04528463e-01, -1.21869343e-01,-1.39173101e-01, -1.56434465e-01, -1.73648178e-01, -1.90808995e-01,-2.07911691e-01, -2.24951054e-01, -2.41921896e-01, -2.58819045e-01,-2.75637356e-01, -2.92371705e-01, -3.09016994e-01, -3.25568154e-01,-3.42020143e-01, -3.58367950e-01, -3.74606593e-01, -3.90731128e-01,-4.06736643e-01, -4.22618262e-01, -4.38371147e-01, -4.53990500e-01,-4.69471563e-01, -4.84809620e-01, -5.00000000e-01, -5.15038075e-01,-5.29919264e-01, -5.44639035e-01, -5.59192903e-01, -5.73576436e-01,-5.87785252e-01, -6.01815023e-01, -6.15661475e-01, -6.29320391e-01,-6.42787610e-01, -6.56059029e-01, -6.69130606e-01, -6.81998360e-01,-6.94658370e-01, -7.07106781e-01, -7.19339800e-01, -7.31353702e-01,-7.43144825e-01, -7.54709580e-01, -7.66044443e-01, -7.77145961e-01,-7.88010754e-01, -7.98635510e-01, -8.09016994e-01, -8.19152044e-01,-8.29037573e-01, -8.38670568e-01, -8.48048096e-01, -8.57167301e-01,-8.66025404e-01, -8.74619707e-01, -8.82947593e-01, -8.91006524e-01,-8.98794046e-01, -9.06307787e-01, -9.13545458e-01, -9.20504853e-01,-9.27183855e-01, -9.33580426e-01, -9.39692621e-01, -9.45518576e-01,-9.51056516e-01, -9.56304756e-01, -9.61261696e-01, -9.65925826e-01,-9.70295726e-01, -9.74370065e-01, -9.78147601e-01, -9.81627183e-01,-9.84807753e-01, -9.87688341e-01, -9.90268069e-01, -9.92546152e-01,-9.94521895e-01, -9.96194698e-01, -9.97564050e-01, -9.98629535e-01,-9.99390827e-01, -9.99847695e-01, -1.00000000e+00, -9.99847695e-01,-9.99390827e-01, -9.98629535e-01, -9.97564050e-01, -9.96194698e-01,-9.94521895e-01, -9.92546152e-01, -9.90268069e-01, -9.87688341e-01,-9.84807753e-01, -9.81627183e-01, -9.78147601e-01, -9.74370065e-01,-9.70295726e-01, -9.65925826e-01, -9.61261696e-01, -9.56304756e-01,-9.51056516e-01, -9.45518576e-01, -9.39692621e-01, -9.33580426e-01,-9.27183855e-01, -9.20504853e-01, -9.13545458e-01, -9.06307787e-01,-8.98794046e-01, -8.91006524e-01, -8.82947593e-01, -8.74619707e-01,-8.66025404e-01, -8.57167301e-01, -8.48048096e-01, -8.38670568e-01,-8.29037573e-01, -8.19152044e-01, -8.09016994e-01, -7.98635510e-01,-7.88010754e-01, -7.77145961e-01, -7.66044443e-01, -7.54709580e-01,-7.43144825e-01, -7.31353702e-01, -7.19339800e-01, -7.07106781e-01,-6.94658370e-01, -6.81998360e-01, -6.69130606e-01, -6.56059029e-01,-6.42787610e-01, -6.29320391e-01, -6.15661475e-01, -6.01815023e-01,-5.87785252e-01, -5.73576436e-01, -5.59192903e-01, -5.44639035e-01,-5.29919264e-01, -5.15038075e-01, -5.00000000e-01, -4.84809620e-01,-4.69471563e-01, -4.53990500e-01, -4.38371147e-01, -4.22618262e-01,-4.06736643e-01, -3.90731128e-01, -3.74606593e-01, -3.58367950e-01,-3.42020143e-01, -3.25568154e-01, -3.09016994e-01, -2.92371705e-01,-2.75637356e-01, -2.58819045e-01, -2.41921896e-01, -2.24951054e-01,-2.07911691e-01, -1.90808995e-01, -1.73648178e-01, -1.56434465e-01,-1.39173101e-01, -1.21869343e-01, -1.04528463e-01, -8.71557427e-02,-6.97564737e-02, -5.23359562e-02, -3.48994967e-02, -1.74524064e-02],
+        [1.00000000e+00, 9.99847695e-01, 9.99390827e-01, 9.98629535e-01,9.97564050e-01, 9.96194698e-01, 9.94521895e-01, 9.92546152e-01,9.90268069e-01, 9.87688341e-01, 9.84807753e-01, 9.81627183e-01,9.78147601e-01, 9.74370065e-01, 9.70295726e-01, 9.65925826e-01,9.61261696e-01, 9.56304756e-01, 9.51056516e-01, 9.45518576e-01,9.39692621e-01, 9.33580426e-01, 9.27183855e-01, 9.20504853e-01,9.13545458e-01, 9.06307787e-01, 8.98794046e-01, 8.91006524e-01,8.82947593e-01, 8.74619707e-01, 8.66025404e-01, 8.57167301e-01,8.48048096e-01, 8.38670568e-01, 8.29037573e-01, 8.19152044e-01,8.09016994e-01, 7.98635510e-01, 7.88010754e-01, 7.77145961e-01,7.66044443e-01, 7.54709580e-01, 7.43144825e-01, 7.31353702e-01,7.19339800e-01, 7.07106781e-01, 6.94658370e-01, 6.81998360e-01,6.69130606e-01, 6.56059029e-01, 6.42787610e-01, 6.29320391e-01,6.15661475e-01, 6.01815023e-01, 5.87785252e-01, 5.73576436e-01,5.59192903e-01, 5.44639035e-01, 5.29919264e-01, 5.15038075e-01,5.00000000e-01, 4.84809620e-01, 4.69471563e-01, 4.53990500e-01,4.38371147e-01, 4.22618262e-01, 4.06736643e-01, 3.90731128e-01,3.74606593e-01, 3.58367950e-01, 3.42020143e-01, 3.25568154e-01,3.09016994e-01, 2.92371705e-01, 2.75637356e-01, 2.58819045e-01,2.41921896e-01, 2.24951054e-01, 2.07911691e-01, 1.90808995e-01,1.73648178e-01, 1.56434465e-01, 1.39173101e-01, 1.21869343e-01,1.04528463e-01, 8.71557427e-02, 6.97564737e-02, 5.23359562e-02,3.48994967e-02, 1.74524064e-02, 6.12323400e-17, -1.74524064e-02,-3.48994967e-02, -5.23359562e-02, -6.97564737e-02, -8.71557427e-02,-1.04528463e-01, -1.21869343e-01, -1.39173101e-01, -1.56434465e-01,-1.73648178e-01, -1.90808995e-01, -2.07911691e-01, -2.24951054e-01,-2.41921896e-01, -2.58819045e-01, -2.75637356e-01, -2.92371705e-01,-3.09016994e-01, -3.25568154e-01, -3.42020143e-01, -3.58367950e-01,-3.74606593e-01, -3.90731128e-01, -4.06736643e-01, -4.22618262e-01,-4.38371147e-01, -4.53990500e-01, -4.69471563e-01, -4.84809620e-01,-5.00000000e-01, -5.15038075e-01, -5.29919264e-01, -5.44639035e-01,-5.59192903e-01, -5.73576436e-01, -5.87785252e-01, -6.01815023e-01,-6.15661475e-01, -6.29320391e-01, -6.42787610e-01, -6.56059029e-01,-6.69130606e-01, -6.81998360e-01, -6.94658370e-01, -7.07106781e-01,-7.19339800e-01, -7.31353702e-01, -7.43144825e-01, -7.54709580e-01,-7.66044443e-01, -7.77145961e-01, -7.88010754e-01, -7.98635510e-01,-8.09016994e-01, -8.19152044e-01, -8.29037573e-01, -8.38670568e-01,-8.48048096e-01, -8.57167301e-01, -8.66025404e-01, -8.74619707e-01,-8.82947593e-01, -8.91006524e-01, -8.98794046e-01, -9.06307787e-01,-9.13545458e-01, -9.20504853e-01, -9.27183855e-01, -9.33580426e-01,-9.39692621e-01, -9.45518576e-01, -9.51056516e-01, -9.56304756e-01,-9.61261696e-01, -9.65925826e-01, -9.70295726e-01, -9.74370065e-01,-9.78147601e-01, -9.81627183e-01, -9.84807753e-01, -9.87688341e-01,-9.90268069e-01, -9.92546152e-01, -9.94521895e-01, -9.96194698e-01,-9.97564050e-01, -9.98629535e-01, -9.99390827e-01, -9.99847695e-01,-1.00000000e+00, -9.99847695e-01, -9.99390827e-01, -9.98629535e-01,-9.97564050e-01, -9.96194698e-01, -9.94521895e-01, -9.92546152e-01,-9.90268069e-01, -9.87688341e-01, -9.84807753e-01, -9.81627183e-01,-9.78147601e-01, -9.74370065e-01, -9.70295726e-01, -9.65925826e-01,-9.61261696e-01, -9.56304756e-01, -9.51056516e-01, -9.45518576e-01,-9.39692621e-01, -9.33580426e-01, -9.27183855e-01, -9.20504853e-01,-9.13545458e-01, -9.06307787e-01, -8.98794046e-01, -8.91006524e-01,-8.82947593e-01, -8.74619707e-01, -8.66025404e-01, -8.57167301e-01,-8.48048096e-01, -8.38670568e-01, -8.29037573e-01, -8.19152044e-01,-8.09016994e-01, -7.98635510e-01, -7.88010754e-01, -7.77145961e-01,-7.66044443e-01, -7.54709580e-01, -7.43144825e-01, -7.31353702e-01,-7.19339800e-01, -7.07106781e-01, -6.94658370e-01, -6.81998360e-01,-6.69130606e-01, -6.56059029e-01, -6.42787610e-01, -6.29320391e-01,-6.15661475e-01, -6.01815023e-01, -5.87785252e-01, -5.73576436e-01,-5.59192903e-01, -5.44639035e-01, -5.29919264e-01, -5.15038075e-01,-5.00000000e-01, -4.84809620e-01, -4.69471563e-01, -4.53990500e-01,-4.38371147e-01, -4.22618262e-01, -4.06736643e-01, -3.90731128e-01,-3.74606593e-01, -3.58367950e-01, -3.42020143e-01, -3.25568154e-01,-3.09016994e-01, -2.92371705e-01, -2.75637356e-01, -2.58819045e-01,-2.41921896e-01, -2.24951054e-01, -2.07911691e-01, -1.90808995e-01,-1.73648178e-01, -1.56434465e-01, -1.39173101e-01, -1.21869343e-01,-1.04528463e-01, -8.71557427e-02, -6.97564737e-02, -5.23359562e-02,-3.48994967e-02, -1.74524064e-02, -1.83697020e-16, 1.74524064e-02,3.48994967e-02, 5.23359562e-02, 6.97564737e-02, 8.71557427e-02,1.04528463e-01, 1.21869343e-01, 1.39173101e-01, 1.56434465e-01,1.73648178e-01, 1.90808995e-01, 2.07911691e-01, 2.24951054e-01,2.41921896e-01, 2.58819045e-01, 2.75637356e-01, 2.92371705e-01,3.09016994e-01, 3.25568154e-01, 3.42020143e-01, 3.58367950e-01,3.74606593e-01, 3.90731128e-01, 4.06736643e-01, 4.22618262e-01,4.38371147e-01, 4.53990500e-01, 4.69471563e-01, 4.84809620e-01,5.00000000e-01, 5.15038075e-01, 5.29919264e-01, 5.44639035e-01,5.59192903e-01, 5.73576436e-01, 5.87785252e-01, 6.01815023e-01,6.15661475e-01, 6.29320391e-01, 6.42787610e-01, 6.56059029e-01,6.69130606e-01, 6.81998360e-01, 6.94658370e-01, 7.07106781e-01,7.19339800e-01, 7.31353702e-01, 7.43144825e-01, 7.54709580e-01,7.66044443e-01, 7.77145961e-01, 7.88010754e-01, 7.98635510e-01,8.09016994e-01, 8.19152044e-01, 8.29037573e-01, 8.38670568e-01,8.48048096e-01, 8.57167301e-01, 8.66025404e-01, 8.74619707e-01,8.82947593e-01, 8.91006524e-01, 8.98794046e-01, 9.06307787e-01,9.13545458e-01, 9.20504853e-01, 9.27183855e-01, 9.33580426e-01,9.39692621e-01, 9.45518576e-01, 9.51056516e-01, 9.56304756e-01,9.61261696e-01, 9.65925826e-01, 9.70295726e-01, 9.74370065e-01,9.78147601e-01, 9.81627183e-01, 9.84807753e-01, 9.87688341e-01,9.90268069e-01, 9.92546152e-01, 9.94521895e-01, 9.96194698e-01,9.97564050e-01, 9.98629535e-01, 9.99390827e-01, 9.99847695e-01],
+        [-1.00000000e+00, -9.82395289e-01, -9.64491330e-01, -9.46293579e-01,-9.27807577e-01, -9.09038955e-01, -8.89993432e-01, -8.70676808e-01,-8.51094968e-01, -8.31253876e-01, -8.11159575e-01, -7.90818188e-01,-7.70235910e-01, -7.49419010e-01, -7.28373831e-01, -7.07106781e-01,-6.85624340e-01, -6.63933051e-01, -6.42039522e-01, -6.19950421e-01,-5.97672477e-01, -5.75212477e-01, -5.52577261e-01, -5.29773725e-01,-5.06808815e-01, -4.83689525e-01, -4.60422900e-01, -4.37016024e-01,-4.13476030e-01, -3.89810087e-01, -3.66025404e-01, -3.42129226e-01,-3.18128832e-01, -2.94031533e-01, -2.69844669e-01, -2.45575608e-01,-2.21231742e-01, -1.96820487e-01, -1.72349278e-01, -1.47825570e-01,-1.23256833e-01, -9.86505512e-02, -7.40142191e-02, -4.93553416e-02,-2.46814299e-02, -1.11022302e-16, 2.46814299e-02, 4.93553416e-02,7.40142191e-02, 9.86505512e-02, 1.23256833e-01, 1.47825570e-01,1.72349278e-01, 1.96820487e-01, 2.21231742e-01, 2.45575608e-01,2.69844669e-01, 2.94031533e-01, 3.18128832e-01, 3.42129226e-01,3.66025404e-01, 3.89810087e-01, 4.13476030e-01, 4.37016024e-01,4.60422900e-01, 4.83689525e-01, 5.06808815e-01, 5.29773725e-01,5.52577261e-01, 5.75212477e-01, 5.97672477e-01, 6.19950421e-01,6.42039522e-01, 6.63933051e-01, 6.85624340e-01, 7.07106781e-01,7.28373831e-01, 7.49419010e-01, 7.70235910e-01, 7.90818188e-01,8.11159575e-01, 8.31253876e-01, 8.51094968e-01, 8.70676808e-01,8.89993432e-01, 9.09038955e-01, 9.27807577e-01, 9.46293579e-01,9.64491330e-01, 9.82395289e-01, 1.00000000e+00, 1.01730010e+00,1.03429032e+00, 1.05096549e+00, 1.06732052e+00, 1.08335044e+00,1.09905036e+00, 1.11441550e+00, 1.12944117e+00, 1.14412281e+00,1.15845593e+00, 1.17243618e+00, 1.18605929e+00, 1.19932112e+00,1.21221762e+00, 1.22474487e+00, 1.23689905e+00, 1.24867646e+00,1.26007351e+00, 1.27108673e+00, 1.28171276e+00, 1.29194838e+00,1.30179045e+00, 1.31123598e+00, 1.32028210e+00, 1.32892605e+00,1.33716519e+00, 1.34499702e+00, 1.35241916e+00, 1.35942933e+00,1.36602540e+00, 1.37220538e+00, 1.37796736e+00, 1.38330960e+00,1.38823048e+00, 1.39272848e+00, 1.39680225e+00, 1.40045053e+00,1.40367223e+00, 1.40646635e+00, 1.40883205e+00, 1.41076861e+00,1.41227543e+00, 1.41335206e+00, 1.41399817e+00, 1.41421356e+00,1.41399817e+00, 1.41335206e+00, 1.41227543e+00, 1.41076861e+00,1.40883205e+00, 1.40646635e+00, 1.40367223e+00, 1.40045053e+00,1.39680225e+00, 1.39272848e+00, 1.38823048e+00, 1.38330960e+00,1.37796736e+00, 1.37220538e+00, 1.36602540e+00, 1.35942933e+00,1.35241916e+00, 1.34499702e+00, 1.33716519e+00, 1.32892605e+00,1.32028210e+00, 1.31123598e+00, 1.30179045e+00, 1.29194838e+00,1.28171276e+00, 1.27108673e+00, 1.26007351e+00, 1.24867646e+00,1.23689905e+00, 1.22474487e+00, 1.21221762e+00, 1.19932112e+00,1.18605929e+00, 1.17243618e+00, 1.15845593e+00, 1.14412281e+00,1.12944117e+00, 1.11441550e+00, 1.09905036e+00, 1.08335044e+00,1.06732052e+00, 1.05096549e+00, 1.03429032e+00, 1.01730010e+00,1.00000000e+00, 9.82395289e-01, 9.64491330e-01, 9.46293579e-01,9.27807577e-01, 9.09038955e-01, 8.89993432e-01, 8.70676808e-01,8.51094968e-01, 8.31253876e-01, 8.11159575e-01, 7.90818188e-01,7.70235910e-01, 7.49419010e-01, 7.28373831e-01, 7.07106781e-01,6.85624340e-01, 6.63933051e-01, 6.42039522e-01, 6.19950421e-01,5.97672477e-01, 5.75212477e-01, 5.52577261e-01, 5.29773725e-01,5.06808815e-01, 4.83689525e-01, 4.60422900e-01, 4.37016024e-01,4.13476030e-01, 3.89810087e-01, 3.66025404e-01, 3.42129226e-01,3.18128832e-01, 2.94031533e-01, 2.69844669e-01, 2.45575608e-01,2.21231742e-01, 1.96820487e-01, 1.72349278e-01, 1.47825570e-01,1.23256833e-01, 9.86505512e-02, 7.40142191e-02, 4.93553416e-02,2.46814299e-02, 2.22044605e-16, -2.46814299e-02, -4.93553416e-02,-7.40142191e-02, -9.86505512e-02, -1.23256833e-01, -1.47825570e-01,-1.72349278e-01, -1.96820487e-01, -2.21231742e-01, -2.45575608e-01,-2.69844669e-01, -2.94031533e-01, -3.18128832e-01, -3.42129226e-01,-3.66025404e-01, -3.89810087e-01, -4.13476030e-01, -4.37016024e-01,-4.60422900e-01, -4.83689525e-01, -5.06808815e-01, -5.29773725e-01,-5.52577261e-01, -5.75212477e-01, -5.97672477e-01, -6.19950421e-01,-6.42039522e-01, -6.63933051e-01, -6.85624340e-01, -7.07106781e-01,-7.28373831e-01, -7.49419010e-01, -7.70235910e-01, -7.90818188e-01,-8.11159575e-01, -8.31253876e-01, -8.51094968e-01, -8.70676808e-01,-8.89993432e-01, -9.09038955e-01, -9.27807577e-01, -9.46293579e-01,-9.64491330e-01, -9.82395289e-01, -1.00000000e+00, -1.01730010e+00,-1.03429032e+00, -1.05096549e+00, -1.06732052e+00, -1.08335044e+00,-1.09905036e+00, -1.11441550e+00, -1.12944117e+00, -1.14412281e+00,-1.15845593e+00, -1.17243618e+00, -1.18605929e+00, -1.19932112e+00,-1.21221762e+00, -1.22474487e+00, -1.23689905e+00, -1.24867646e+00,-1.26007351e+00, -1.27108673e+00, -1.28171276e+00, -1.29194838e+00,-1.30179045e+00, -1.31123598e+00, -1.32028210e+00, -1.32892605e+00,-1.33716519e+00, -1.34499702e+00, -1.35241916e+00, -1.35942933e+00,-1.36602540e+00, -1.37220538e+00, -1.37796736e+00, -1.38330960e+00,-1.38823048e+00, -1.39272848e+00, -1.39680225e+00, -1.40045053e+00,-1.40367223e+00, -1.40646635e+00, -1.40883205e+00, -1.41076861e+00,-1.41227543e+00, -1.41335206e+00, -1.41399817e+00, -1.41421356e+00,-1.41399817e+00, -1.41335206e+00, -1.41227543e+00, -1.41076861e+00,-1.40883205e+00, -1.40646635e+00, -1.40367223e+00, -1.40045053e+00,-1.39680225e+00, -1.39272848e+00, -1.38823048e+00, -1.38330960e+00,-1.37796736e+00, -1.37220538e+00, -1.36602540e+00, -1.35942933e+00,-1.35241916e+00, -1.34499702e+00, -1.33716519e+00, -1.32892605e+00,-1.32028210e+00, -1.31123598e+00, -1.30179045e+00, -1.29194838e+00,-1.28171276e+00, -1.27108673e+00, -1.26007351e+00, -1.24867646e+00,-1.23689905e+00, -1.22474487e+00, -1.21221762e+00, -1.19932112e+00,-1.18605929e+00, -1.17243618e+00, -1.15845593e+00, -1.14412281e+00,-1.12944117e+00, -1.11441550e+00, -1.09905036e+00, -1.08335044e+00,-1.06732052e+00, -1.05096549e+00, -1.03429032e+00, -1.01730010e+00],
+        [1.00000000e+00, 1.01730010e+00, 1.03429032e+00, 1.05096549e+00,1.06732052e+00, 1.08335044e+00, 1.09905036e+00, 1.11441550e+00,1.12944117e+00, 1.14412281e+00, 1.15845593e+00, 1.17243618e+00,1.18605929e+00, 1.19932112e+00, 1.21221762e+00, 1.22474487e+00,1.23689905e+00, 1.24867646e+00, 1.26007351e+00, 1.27108673e+00,1.28171276e+00, 1.29194838e+00, 1.30179045e+00, 1.31123598e+00,1.32028210e+00, 1.32892605e+00, 1.33716519e+00, 1.34499702e+00,1.35241916e+00, 1.35942933e+00, 1.36602540e+00, 1.37220538e+00,1.37796736e+00, 1.38330960e+00, 1.38823048e+00, 1.39272848e+00,1.39680225e+00, 1.40045053e+00, 1.40367223e+00, 1.40646635e+00,1.40883205e+00, 1.41076861e+00, 1.41227543e+00, 1.41335206e+00,1.41399817e+00, 1.41421356e+00, 1.41399817e+00, 1.41335206e+00,1.41227543e+00, 1.41076861e+00, 1.40883205e+00, 1.40646635e+00,1.40367223e+00, 1.40045053e+00, 1.39680225e+00, 1.39272848e+00,1.38823048e+00, 1.38330960e+00, 1.37796736e+00, 1.37220538e+00,1.36602540e+00, 1.35942933e+00, 1.35241916e+00, 1.34499702e+00,1.33716519e+00, 1.32892605e+00, 1.32028210e+00, 1.31123598e+00,1.30179045e+00, 1.29194838e+00, 1.28171276e+00, 1.27108673e+00,1.26007351e+00, 1.24867646e+00, 1.23689905e+00, 1.22474487e+00,1.21221762e+00, 1.19932112e+00, 1.18605929e+00, 1.17243618e+00,1.15845593e+00, 1.14412281e+00, 1.12944117e+00, 1.11441550e+00,1.09905036e+00, 1.08335044e+00, 1.06732052e+00, 1.05096549e+00,1.03429032e+00, 1.01730010e+00, 1.00000000e+00, 9.82395289e-01,9.64491330e-01, 9.46293579e-01, 9.27807577e-01, 9.09038955e-01,8.89993432e-01, 8.70676808e-01, 8.51094968e-01, 8.31253876e-01,8.11159575e-01, 7.90818188e-01, 7.70235910e-01, 7.49419010e-01,7.28373831e-01, 7.07106781e-01, 6.85624340e-01, 6.63933051e-01,6.42039522e-01, 6.19950421e-01, 5.97672477e-01, 5.75212477e-01,5.52577261e-01, 5.29773725e-01, 5.06808815e-01, 4.83689525e-01,4.60422900e-01, 4.37016024e-01, 4.13476030e-01, 3.89810087e-01,3.66025404e-01, 3.42129226e-01, 3.18128832e-01, 2.94031533e-01,2.69844669e-01, 2.45575608e-01, 2.21231742e-01, 1.96820487e-01,1.72349278e-01, 1.47825570e-01, 1.23256833e-01, 9.86505512e-02,7.40142191e-02, 4.93553416e-02, 2.46814299e-02, 1.11022302e-16,-2.46814299e-02, -4.93553416e-02, -7.40142191e-02, -9.86505512e-02,-1.23256833e-01, -1.47825570e-01, -1.72349278e-01, -1.96820487e-01,-2.21231742e-01, -2.45575608e-01, -2.69844669e-01, -2.94031533e-01,-3.18128832e-01, -3.42129226e-01, -3.66025404e-01, -3.89810087e-01,-4.13476030e-01, -4.37016024e-01, -4.60422900e-01, -4.83689525e-01,-5.06808815e-01, -5.29773725e-01, -5.52577261e-01, -5.75212477e-01,-5.97672477e-01, -6.19950421e-01, -6.42039522e-01, -6.63933051e-01,-6.85624340e-01, -7.07106781e-01, -7.28373831e-01, -7.49419010e-01,-7.70235910e-01, -7.90818188e-01, -8.11159575e-01, -8.31253876e-01,-8.51094968e-01, -8.70676808e-01, -8.89993432e-01, -9.09038955e-01,-9.27807577e-01, -9.46293579e-01, -9.64491330e-01, -9.82395289e-01,-1.00000000e+00, -1.01730010e+00, -1.03429032e+00, -1.05096549e+00,-1.06732052e+00, -1.08335044e+00, -1.09905036e+00, -1.11441550e+00,-1.12944117e+00, -1.14412281e+00, -1.15845593e+00, -1.17243618e+00,-1.18605929e+00, -1.19932112e+00, -1.21221762e+00, -1.22474487e+00,-1.23689905e+00, -1.24867646e+00, -1.26007351e+00, -1.27108673e+00,-1.28171276e+00, -1.29194838e+00, -1.30179045e+00, -1.31123598e+00,-1.32028210e+00, -1.32892605e+00, -1.33716519e+00, -1.34499702e+00,-1.35241916e+00, -1.35942933e+00, -1.36602540e+00, -1.37220538e+00,-1.37796736e+00, -1.38330960e+00, -1.38823048e+00, -1.39272848e+00,-1.39680225e+00, -1.40045053e+00, -1.40367223e+00, -1.40646635e+00,-1.40883205e+00, -1.41076861e+00, -1.41227543e+00, -1.41335206e+00,-1.41399817e+00, -1.41421356e+00, -1.41399817e+00, -1.41335206e+00,-1.41227543e+00, -1.41076861e+00, -1.40883205e+00, -1.40646635e+00,-1.40367223e+00, -1.40045053e+00, -1.39680225e+00, -1.39272848e+00,-1.38823048e+00, -1.38330960e+00, -1.37796736e+00, -1.37220538e+00,-1.36602540e+00, -1.35942933e+00, -1.35241916e+00, -1.34499702e+00,-1.33716519e+00, -1.32892605e+00, -1.32028210e+00, -1.31123598e+00,-1.30179045e+00, -1.29194838e+00, -1.28171276e+00, -1.27108673e+00,-1.26007351e+00, -1.24867646e+00, -1.23689905e+00, -1.22474487e+00,-1.21221762e+00, -1.19932112e+00, -1.18605929e+00, -1.17243618e+00,-1.15845593e+00, -1.14412281e+00, -1.12944117e+00, -1.11441550e+00,-1.09905036e+00, -1.08335044e+00, -1.06732052e+00, -1.05096549e+00,-1.03429032e+00, -1.01730010e+00, -1.00000000e+00, -9.82395289e-01,-9.64491330e-01, -9.46293579e-01, -9.27807577e-01, -9.09038955e-01,-8.89993432e-01, -8.70676808e-01, -8.51094968e-01, -8.31253876e-01,-8.11159575e-01, -7.90818188e-01, -7.70235910e-01, -7.49419010e-01,-7.28373831e-01, -7.07106781e-01, -6.85624340e-01, -6.63933051e-01,-6.42039522e-01, -6.19950421e-01, -5.97672477e-01, -5.75212477e-01,-5.52577261e-01, -5.29773725e-01, -5.06808815e-01, -4.83689525e-01,-4.60422900e-01, -4.37016024e-01, -4.13476030e-01, -3.89810087e-01,-3.66025404e-01, -3.42129226e-01, -3.18128832e-01, -2.94031533e-01,-2.69844669e-01, -2.45575608e-01, -2.21231742e-01, -1.96820487e-01,-1.72349278e-01, -1.47825570e-01, -1.23256833e-01, -9.86505512e-02,-7.40142191e-02, -4.93553416e-02, -2.46814299e-02, -3.33066907e-16,2.46814299e-02, 4.93553416e-02, 7.40142191e-02, 9.86505512e-02,1.23256833e-01, 1.47825570e-01, 1.72349278e-01, 1.96820487e-01,2.21231742e-01, 2.45575608e-01, 2.69844669e-01, 2.94031533e-01,3.18128832e-01, 3.42129226e-01, 3.66025404e-01, 3.89810087e-01,4.13476030e-01, 4.37016024e-01, 4.60422900e-01, 4.83689525e-01,5.06808815e-01, 5.29773725e-01, 5.52577261e-01, 5.75212477e-01,5.97672477e-01, 6.19950421e-01, 6.42039522e-01, 6.63933051e-01,6.85624340e-01, 7.07106781e-01, 7.28373831e-01, 7.49419010e-01,7.70235910e-01, 7.90818188e-01, 8.11159575e-01, 8.31253876e-01,8.51094968e-01, 8.70676808e-01, 8.89993432e-01, 9.09038955e-01,9.27807577e-01, 9.46293579e-01, 9.64491330e-01, 9.82395289e-01]
+    ])
+    tt2 = tt2/ss
+    tt2 = np.row_stack((tt2, -tt2))
+    term2 = ss*(1-tt2+tt2**2)
+
+    #term2 = []
+    #for t2_item in tt2:
+    #    term2.append(ss * (1 - t2_item + t2_item ** 2))
+
+    #case_value = []
+    #for c_i in range(8):
+    #    case_value.append((1/ ss ** 2) * term1[c_i%4,:] * term2[c_i])
+
+    case_value = (1 / ss ** 2) * term1 * term2
 
     return np.max(case_value)
 

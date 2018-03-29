@@ -40,22 +40,28 @@ def basic_filter(params, ix, iy, rad, e_thresh=0.5, bright=True):
     # e_thresh: acceptable eccentricity threshold (minor/major)
     # bright: whether the pupil is bright or dark
 
+    # remove nanas
+    #params = params.dropna()
+
     # remove ellipses outside some max allowed circle
-    in_circle = np.where((params.x-ix)**2+(params.y-iy)**2 < rad**2)[0]
+    in_circle = np.where((params.x-iy)**2+(params.y-ix)**2 < rad**2)[0]
     params = params.loc[in_circle,:]
 
     # remove extremely oblong ones
     params = params[params.e > e_thresh]
 
     # and extremely tiny ones
-    params = params[params.a > rad/4]
+    params = params[params.a > rad/6.]
 
     # threshold based on mean value
-    thresh = filters.threshold_otsu(params['v'])
-    if bright:
-        params = params[params.v > thresh]
-    else:
-        params = params[params.v < thresh]
+    try:
+        thresh = filters.threshold_otsu(params['v'])
+        if bright:
+            params = params[params.v > thresh]
+        else:
+            params = params[params.v < thresh]
+    except:
+        pass
     return params
 
 def filter_outliers(params, outlier_params = ('x','y','e','v','n'),

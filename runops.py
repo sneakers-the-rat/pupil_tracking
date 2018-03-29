@@ -24,6 +24,8 @@ def draw_circle(event,x,y,flags,param):
         drawing = False
         cv2.circle(frame_pupil,(ix,iy),rad,(255,255,255),-1)
 
+
+
 def get_crop_roi(vid):
     ret, frame = vid.read()
     if ret == False:
@@ -67,6 +69,7 @@ def set_params(vid, roi):
     canny_sig = 200
     canny_high = 50
     canny_low = 10
+    closing_rad = 3
 
     cv2.namedWindow('params', flags=cv2.WINDOW_NORMAL)
     cv2.createTrackbar('Sigmoid Cutoff', 'params', sig_cutoff, 100, imops.nothing)
@@ -74,6 +77,7 @@ def set_params(vid, roi):
     cv2.createTrackbar('Gaussian Blur', 'params', canny_sig, 700, imops.nothing)
     cv2.createTrackbar('Canny High Threshold', 'params', canny_high, 300, imops.nothing)
     cv2.createTrackbar('Canny Low Threshold', 'params', canny_low, 300, imops.nothing)
+    cv2.createTrackbar('Closing Radius', 'params', closing_rad, 10, imops.nothing)
 
     while True:
         k = cv2.waitKey(1) & 0xFF
@@ -89,6 +93,7 @@ def set_params(vid, roi):
         canny_sig = cv2.getTrackbarPos('Gaussian Blur', 'params')
         canny_high = cv2.getTrackbarPos('Canny High Threshold', 'params')
         canny_low = cv2.getTrackbarPos('Canny Low Threshold', 'params')
+        closing_rad = cv2.getTrackbarPos('Closing Radius', 'params')
 
         sig_cutoff = sig_cutoff / 100.
         canny_sig = canny_sig / 100.
@@ -97,7 +102,8 @@ def set_params(vid, roi):
 
         frame = imops.preprocess_image(frame, roi,
                                        sig_cutoff=sig_cutoff,
-                                       sig_gain=sig_gain)
+                                       sig_gain=sig_gain,
+                                       closing=closing_rad)
         edges_params = imops.scharr_canny(frame, sigma=canny_sig,
                                           high_threshold=canny_high, low_threshold=canny_low)
 

@@ -16,7 +16,7 @@ from skimage import feature, morphology, img_as_float, draw
 from itertools import count
 from time import time
 
-
+import cProfile
 import imops
 import model
 import fitutils
@@ -374,11 +374,12 @@ fn = '/home/lab/pupil_vids/nick3_track2.mp4'
 writer = io.FFmpegWriter(fn)
 
 ell_params = fitutils.clean_lists(x_list, y_list, a_list, b_list, t_list, v_list, n_list)
-ell_params = fitutils.basic_filter(ell_params, ix, iy, rad)
-ell_out = fitutils.filter_outliers(ell_params, neighbors=500)
+ell_params = basic_filter(ell_params, ix, iy, rad, e_thresh=0.6)
+ell_out = fitutils.filter_outliers(df_fill, neighbors=1000)
 ell_smooth = fitutils.smooth_estimates(ell_out, hl=5)
 
-vid = cv2.VideoCapture(vid_file)
+vid = cv2.VideoCapture(vid_fn)
+#vid.set(cv2.CAP_PROP_POS_MSEC, 350000)
 frame_counter = count()
 cv2.namedWindow('run', flags=cv2.WINDOW_NORMAL)
 for i in xrange(len(ell_smooth)):
@@ -394,35 +395,45 @@ for i in xrange(len(ell_smooth)):
 
     n_frame = frame_counter.next()
 
-    try:
-        aframe_params = ell_smooth.loc[n_frame,['x','y','a','b','t']]
-    except:
-        frame_orig = imops.crop(frame_orig, roi)
-        frame_orig = img_as_float(frame_orig)
-        cv2.imshow('run', frame_orig)
-        frame_orig = frame_orig * 255
-        writer.writeFrame(frame_orig)
-        continue
+    # try:
+    #     aframe_params = ell_smooth.loc[n_frame,['x','y','a','b','t']]
+    # except:
+    #     frame_orig = imops.crop(frame_orig, roi)
+    #     frame_orig = img_as_float(frame_orig)
+    #     cv2.imshow('run', frame_orig)
+    #     frame_orig = frame_orig * 255
+    #     writer.writeFrame(frame_orig)
+    #     continue
+
+    # e_points = []
+    # for i, p in ell_smooth[ell_smooth.n==n_frame].iterrows():
+    #     points = emod.predict_xy(thetas, params=(p.x, p.y, p.a, p.b, p.t))
+    #     e_points.append(points.astype(np.int))
+    #     #points_up = points+1
+    #     #points_down = points-1
+    #     #points = np.concatenate((points, points_up, points_down), axis=0)
+    # try:
+    #     e_points = np.row_stack(e_points)
+    # except ValueError:
+    #     continue
+    p = ell_smooth.iloc[n_frame]
+    e_points = emod.predict_xy(thetas, params=(p.x, p.y, p.a, p.b, p.t))
+    e_points = e_points.astype(np.int)
 
 
-    points = emod.predict_xy(thetas, params=aframe_params)
-    points_up = points+1
-    points_down = points-1
-    points = np.concatenate((points, points_up, points_down), axis=0)
 
-    points = points.astype(np.int)
 
 
     frame_orig = imops.crop(frame_orig, roi)
     frame_orig = img_as_float(frame_orig)
 
-    draw.set_color(frame_orig, (points[:, 1], points[:, 0]), (1, 0, 0))
+    draw.set_color(frame_orig, (e_points[:, 0], e_points[:, 1]), (1, 0, 0))
     cv2.imshow('run', frame_orig)
 
-    frame_orig = frame_orig*255
+    #frame_orig = frame_orig*255
     #frame_orig = frame_orig.astype(np.uint8)
 
-    writer.writeFrame(frame_orig)
+    #writer.writeFrame(frame_orig)
 
 
 
@@ -455,14 +466,17 @@ for i in range(100):
     frame = imops.preprocess_image(frame_orig, roi,
                                    sig_cutoff=sig_cutoff,
                                    sig_gain=sig_gain)
-    edges_params = imops.scharr_canny(frame, sigma=canny_sig,
+    edges_params = scharr_canny(frame, sigma=canny_sig,
                                       high_threshold=canny_high, low_threshold=canny_low)
     edges_rep = repair_edges(edges_params, frame, sigma=canny_sig)
+    edges_rep_img = np.zeros(edges_params.shape, dtype=np.int)
+    for i, e in enumerate(edges_rep):
+        edges_rep_img[e[:,0], e[:,1]] = i
     ax[0].clear()
     ax[1].clear()
     ax[0].imshow(edges_params)
-    ax[1].imshow(edges_rep)
-    plt.pause(5)
+    ax[1].imshow(edges_rep_img)
+    plt.pause(1)
 
 
 
@@ -503,12 +517,89 @@ def run_shitty():
         ret, frame_orig = vid.read()
         if ret == False:
             break
-
         n_frame = frame_counter.next()
-        # if n_frame % 10 == 0:
-        #     now = time()
-        #     fps = n_frame / (now - starttime)
-        #     print('frame {} of {}, {} fps'.format(n_frame, total_frames, fps))
+        frame_orig = cv2.cvtColor(frame_orig, cv2.COLOR_BGR2GRAY)
+        frame_orig = imops.crop(frame_orig, roi)
+
+        frame = imops.preprocess_image(frame_orig, params['roi'],
+                                       sig_cutoff=params['sig_cutoff'],
+                                       sig_gain=params['sig_gain'])
+
+        edges = scharr_canny(frame, sigma=params['canny_sig'],
+                                   high_threshold=params['canny_high'], low_threshold=params['canny_low'])
+
+        edges_rep = repair_edges(edges, frame)
+
+        ellipses = [imops.fit_ellipse(e) for e in edges_rep]
+        # ell_pts = np.ndarray(shape=(0, 2))
+        for e in ellipses:
+            if not e:
+                continue
+
+            x_list.append(e.params[0])
+            y_list.append(e.params[1])
+            a_list.append(e.params[2])
+            b_list.append(e.params[3])
+            t_list.append(e.params[4])
+            n_list.append(n_frame)
+            # get mean darkness
+            ell_mask_y, ell_mask_x = draw.ellipse(e.params[0], e.params[1], e.params[2], e.params[3],
+                                                  shape=(frame.shape[1], frame.shape[0]),
+                                                  rotation=e.params[4])
+
+            v_list.append(np.mean(frame[ell_mask_x, ell_mask_y]))
+
+
+import cProfile
+edges_lots = []
+frames = []
+for i in range(200):
+    ret, frame_orig = vid.read()
+    frame_orig = cv2.cvtColor(frame_orig, cv2.COLOR_BGR2GRAY)
+    frame_orig = imops.crop(frame_orig, roi)
+
+    frame = imops.preprocess_image(frame_orig, params['roi'],
+                                   sig_cutoff=params['sig_cutoff'],
+                                   sig_gain=params['sig_gain'])
+    frames.append(frame)
+
+    # edges = imops.scharr_canny(frame, sigma=params['canny_sig'],
+    #                            high_threshold=params['canny_high'], low_threshold=params['canny_low'])
+    #
+    # edges_lots.extend(repair_edges(edges, frame))
+
+def order_many_edges():
+    for e in edges_lots:
+        order_points(e)
+
+def scharr_many():
+    for frame in frames:
+        edges = scharr_canny(frame, sigma=params['canny_sig'],
+                             high_threshold=params['canny_high'], low_threshold=params['canny_low'])
+
+
+
+
+cProfile.runctx('run_shitty()', None, locals(), filename='/home/lab/stats6.txt')
+
+
+####################
+# timing scharr functions
+cProfile.runctx('scharr_canny_old(frame, sigma, low_threshold=0.25, high_threshold=1.)', None, locals(), filename='/home/lab/scharr_old.txt')
+
+import timeit
+def run_new_shitty():
+    vid_file = '/home/lab/pupil_vids/nick3.avi'
+    vid = cv2.VideoCapture(vid_file)
+    roi = (725, 529, 523, 334)
+    sig_cutoff = 0.7
+    sig_gain = 10
+    canny_sig = 4.07
+    canny_high = 1.17
+    canny_low = 0.3
+
+    for i in range(200):
+        ret, frame_orig = vid.read()
 
         frame = imops.preprocess_image(frame_orig, roi,
                                        sig_cutoff=sig_cutoff,
@@ -518,41 +609,44 @@ def run_shitty():
         edges_params = imops.scharr_canny(frame, sigma=canny_sig,
                                           high_threshold=canny_high, low_threshold=canny_low)
 
-        edges_params = imops.repair_edges(edges_params, frame)
 
+cProfile.runctx('run_new_shitty()', None, locals(), filename='/home/lab/scharr_new2.txt')
+
+
+########
+one_col = np.ones((dists.shape[0],1))
+first_col = dists[:,0].reshape(-1, 1)
+
+gram = -0.5*(dists-np.matmul(one_col, first_col.T)-np.matmul(first_col, one_col.T))
+
+
+def order_points(edge_points):
+    dists = distance.squareform(distance.pdist(edge_points))
+
+    inds = {i:i for i in range(len(edge_points))}
+
+    backwards=False
+    point = 0
+    new_points = dq()
+    new_points.append(edge_points[inds.pop(point),:])
+
+    while True:
+        close_enough = np.where(np.logical_and(dists[point,:]>0, dists[point,:]<3))[0]
+        close_enough = close_enough[np.in1d(close_enough, inds.keys())]
         try:
-            labeled_edges = morphology.label(edges_params)
-        except:
-            continue
-        uq_edges = np.unique(labeled_edges)
-        uq_edges = uq_edges[uq_edges > 0]
-        ellipses = [imops.fit_ellipse(labeled_edges, e) for e in uq_edges]
-        ell_pts = np.ndarray(shape=(0, 2))
-        for e in ellipses:
-            if not e:
+            point = close_enough[np.argmin(dists[point,close_enough])]
+        except ValueError:
+            # either at one end or *the end*
+            if not backwards:
+                point = 0
+                backwards = True
                 continue
-            points = e.predict_xy(thetas)
-            points[points < 0] = 0
-            points[points[:, 0] > labeled_edges.shape[1], 0] = labeled_edges.shape[1]
-            points[points[:, 1] > labeled_edges.shape[0], 1] = labeled_edges.shape[0]
+            else:
+                break
 
-            ell_pts = np.concatenate((ell_pts, points), axis=0)
-            ell_params = e.params
-            x_list.append(e.params[0])
-            y_list.append(e.params[1])
-            a_list.append(e.params[2])
-            b_list.append(e.params[3])
-            t_list.append(e.params[4])
-            n_list.append(n_frame)
-            # get mean darkness
-            ell_mask_y, ell_mask_x = draw.ellipse(ell_params[0], ell_params[1], ell_params[2], ell_params[3],
-                                                  shape=(labeled_edges.shape[1], labeled_edges.shape[0]),
-                                                  rotation=ell_params[4])
+        if not backwards:
+            new_points.append(edge_points[inds.pop(point),:])
+        else:
+            new_points.appendleft(edge_points[inds.pop(point),:])
 
-            v_list.append(np.mean(frame[ell_mask_x, ell_mask_y]))
-
-import cProfile
-
-
-
-cProfile.runctx('run_shitty()', None, locals(), filename='/home/lab/stats4.txt')
+    return np.row_stack(new_points)

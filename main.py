@@ -1,7 +1,7 @@
 import numpy as np
 import cv2
 from scipy.spatial.distance import euclidean
-from skimage import feature, morphology, img_as_float, draw
+from skimage import feature, morphology, img_as_float, draw, measure
 from itertools import count
 from time import time
 import argparse
@@ -16,6 +16,8 @@ from tqdm import tqdm
 import imops
 import runops
 import model
+
+emod = measure.EllipseModel()
 
 ##############################
 # Initialization
@@ -75,9 +77,10 @@ if not os.path.exists(param_dir):
 ###############################
 # Get initial ROI and image preprocessing params
 
-files=['/Users/jonny/pupil_vids/nick3.avi']
+files=['/home/lab/pupil_vids/test.mkv']
 vid_fn = files[0]
 vid = cv2.VideoCapture(vid_fn)
+#vid.set(cv2.CAP_PROP_POS_MSEC, 350000)
 
 # crop roi
 roi, frame = runops.get_crop_roi(vid)
@@ -108,14 +111,17 @@ batch_size = 200 # frames
 # run once we get good params
 # remake video object to restart from frame 0
 vid = cv2.VideoCapture(vid_fn)
+#vid.set(cv2.CAP_PROP_POS_MSEC, 350000)
 total_frames = vid.get(cv2.CAP_PROP_FRAME_COUNT)
+n_frames = 2000
 #thetas = np.linspace(0, np.pi*2, num=100, endpoint=False)
 frame_counter = count()
 batch_counter = count()
+thetas = np.linspace(0, np.pi*2, num=200, endpoint=False)
 
-pool = mp.Pool(processes=n_procs)
-pbar = tqdm(total=total_frames, position=0)
-batch_frames = np.ndarray((frame.shape[0], frame.shape[1], batch_size), dtype=np.uint8)
+#pool = mp.Pool(processes=n_procs)
+pbar = tqdm(total=n_frames, position=0)
+#batch_frames = np.ndarray((frame.shape[0], frame.shape[1], batch_size), dtype=np.uint8)
 params_frames = []
 results = []
 
@@ -127,7 +133,9 @@ t_list = []
 n_list = []
 v_list = []
 
-for i in xrange(1000):
+cv2.namedWindow('run', flags=cv2.WINDOW_NORMAL)
+
+for i in xrange(n_frames):
     k = cv2.waitKey(1) & 0xFF
     if k == ord('\r'):
         break
@@ -151,12 +159,16 @@ for i in xrange(1000):
 
     edges_rep = imops.repair_edges(edges, frame)
 
-    labeled_edges = morphology.label(edges)
+    edges_3 = np.repeat(edges[:,:,np.newaxis], 3, axis=2).astype(np.uint8)
+    edges_3 = edges_3 * 255
+    edges_rep_im = np.zeros(edges_3.shape, dtype=np.uint8)
+    frame_orig = np.repeat(frame_orig[:,:,np.newaxis], 3, axis=2).astype(np.uint8)
 
-    uq_edges = np.unique(labeled_edges)
-    uq_edges = uq_edges[uq_edges > 0]
-    ellipses = [imops.fit_ellipse(labeled_edges, e) for e in uq_edges]
-    ell_pts = np.ndarray(shape=(0, 2))
+    for e in edges_rep:
+        edges_rep_im[e[:,0],e[:,1],:] = 255
+
+    ellipses = [imops.fit_ellipse(e) for e in edges_rep]
+    #ell_pts = np.ndarray(shape=(0, 2))
     for e in ellipses:
         if not e:
             continue
@@ -169,10 +181,21 @@ for i in xrange(1000):
         n_list.append(n_frame)
         # get mean darkness
         ell_mask_y, ell_mask_x = draw.ellipse(e.params[0], e.params[1], e.params[2], e.params[3],
-                                              shape=(labeled_edges.shape[1], labeled_edges.shape[0]),
+                                              shape=(frame.shape[1], frame.shape[0]),
                                               rotation=e.params[4])
 
         v_list.append(np.mean(frame[ell_mask_x, ell_mask_y]))
+
+        points = emod.predict_xy(thetas, params=e.params)
+        points = points.astype(np.int)
+
+        draw.set_color(edges_3, (points[:,0], points[:,1]), (0,0,255))
+        draw.set_color(edges_rep_im, (points[:,0], points[:,1]), (0,0,255))
+        draw.set_color(frame_orig, (points[:, 0], points[:, 1]), (0, 0, 255))
+
+    cv2.imshow('run', np.vstack((frame_orig, edges_3, edges_rep_im)))
+
+
 
 
 
