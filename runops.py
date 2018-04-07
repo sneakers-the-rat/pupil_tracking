@@ -1,9 +1,9 @@
 import numpy as np
 import cv2
 from scipy.spatial.distance import euclidean
-from skimage import feature, morphology, img_as_float, draw
+from skimage import feature, morphology, img_as_float, draw, measure
 from itertools import count
-from time import time
+from time import time, sleep
 import multiprocessing as mp
 from tqdm import tqdm, trange
 
@@ -193,4 +193,76 @@ def process_frames(frames, params, order):
     ell_params = fitutils.clean_lists(x_list, y_list, a_list, b_list, t_list, v_list, n_list)
 
     return order, ell_params.tolist()
+
+def play_fit(vid, roi, params):
+    thetas = np.linspace(0, np.pi * 2, num=200, endpoint=False)
+
+    # start vid at first frame in params
+    first_frame = params.index.min()
+
+    ret = vid.set(cv2.CAP_PROP_POS_FRAMES, first_frame)
+
+    frame_counter = count()
+
+    emod = measure.EllipseModel()
+
+    cv2.namedWindow('play', flags=cv2.WINDOW_NORMAL)
+    for i in xrange(len(params)):
+        k = cv2.waitKey(1) & 0xFF
+        if k == ord('\r'):
+            break
+
+        ret, frame_orig = vid.read()
+        if ret == False:
+            break
+        frame_orig = cv2.cvtColor(frame_orig, cv2.COLOR_BGR2RGB)
+
+        n_frame = frame_counter.next()
+
+        if 'n' in params.keys():
+            ell_rows = params[params.n==n_frame]
+            frame_orig = imops.crop(frame_orig, roi)
+            frame_orig = img_as_float(frame_orig)
+            for i, e in ell_rows.iterrows():
+                e_points = emod.predict_xy(thetas, params=(e.x, e.y, e.a, e.b, e.t))
+                e_points = e_points.astype(np.int)
+
+                draw.set_color(frame_orig, (e_points[:, 0], e_points[:, 1]), (1, 0, 0))
+                draw.set_color(frame_orig, (e_points[:, 0] + 1, e_points[:, 1]), (1, 0, 0))
+                draw.set_color(frame_orig, (e_points[:, 0] - 1, e_points[:, 1]), (1, 0, 0))
+                draw.set_color(frame_orig, (e_points[:, 0], e_points[:, 1] + 1), (1, 0, 0))
+                draw.set_color(frame_orig, (e_points[:, 0], e_points[:, 1] - 1), (1, 0, 0))
+                draw.set_color(frame_orig, (e_points[:, 0] + 1, e_points[:, 1] + 1), (1, 0, 0))
+                draw.set_color(frame_orig, (e_points[:, 0] + 1, e_points[:, 1] - 1), (1, 0, 0))
+                draw.set_color(frame_orig, (e_points[:, 0] - 1, e_points[:, 1] + 1), (1, 0, 0))
+                draw.set_color(frame_orig, (e_points[:, 0] - 1, e_points[:, 1] - 1), (1, 0, 0))
+
+
+        else:
+            p = params.iloc[n_frame]
+            e_points = emod.predict_xy(thetas, params=(p.x, p.y, p.a, p.b, p.t))
+            e_points = e_points.astype(np.int)
+
+            frame_orig = imops.crop(frame_orig, roi)
+            frame_orig = img_as_float(frame_orig)
+
+            draw.set_color(frame_orig, (e_points[:, 0], e_points[:, 1]), (1, 0, 0))
+            draw.set_color(frame_orig, (e_points[:, 0]+1, e_points[:, 1]), (1, 0, 0))
+            draw.set_color(frame_orig, (e_points[:, 0] - 1, e_points[:, 1]), (1, 0, 0))
+            draw.set_color(frame_orig, (e_points[:, 0], e_points[:, 1]+1), (1, 0, 0))
+            draw.set_color(frame_orig, (e_points[:, 0], e_points[:, 1]-1), (1, 0, 0))
+            draw.set_color(frame_orig, (e_points[:, 0] + 1, e_points[:, 1]+1), (1, 0, 0))
+            draw.set_color(frame_orig, (e_points[:, 0] + 1, e_points[:, 1]-1), (1, 0, 0))
+            draw.set_color(frame_orig, (e_points[:, 0] - 1, e_points[:, 1]+1), (1, 0, 0))
+            draw.set_color(frame_orig, (e_points[:, 0] - 1, e_points[:, 1]-1), (1, 0, 0))
+        cv2.imshow('play', frame_orig)
+        sleep(1./30)
+
+        # frame_orig = frame_orig*255
+        # frame_orig = frame_orig.astype(np.uint8)
+
+        # writer.writeFrame(frame_orig)
+
+    cv2.destroyAllWindows()
+
 

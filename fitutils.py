@@ -32,6 +32,9 @@ def clean_lists(x_list, y_list, a_list, b_list, t_list, v_list, n_list):
     # add eccentricity column
     params['e'] = params['b'] / params['a']
 
+    # remove nans
+    params.dropna(axis=0, how='any', inplace=True)
+
     return params
 
 def basic_filter(params, ix, iy, rad, e_thresh=0.5, bright=True):
@@ -45,29 +48,42 @@ def basic_filter(params, ix, iy, rad, e_thresh=0.5, bright=True):
 
     # remove ellipses outside some max allowed circle
     in_circle = np.where((params.x-iy)**2+(params.y-ix)**2 < rad**2)[0]
-    params = params.loc[in_circle,:]
+    params = params.iloc[in_circle,:]
+    #
+    # # and with negative x or y values
+    # params = params[np.logical_and(params.x>0, params.y>0)]
+    #
+    # # or outside say 5 stdevs
+    # for col in ['a', 'b', 'x', 'y']:
+    #     col_std = params[col].std()
+    #     col_mean = params[col].mean()
+    #     params = params[np.logical_and(params[col]<col_mean+col_std*5,
+    #                                    params[col]>col_mean-col_std*5)]
+
 
     # remove extremely oblong ones
     params = params[params.e > e_thresh]
 
-    # and extremely tiny ones
+    # and extremely big/tiny ones
     params = params[params.a > rad/6.]
 
     # threshold based on mean value
-    try:
-        thresh = filters.threshold_otsu(params['v'])
-        if bright:
-            params = params[params.v > thresh]
-        else:
-            params = params[params.v < thresh]
-    except:
-        pass
+    # DONT THINK THIS WORKS, CUTS A LOTTA GOOD ONES OUT
+    # try:
+    #     thresh = filters.threshold_otsu(params['v'])
+    #     if bright:
+    #         params = params[params.v > thresh]
+    #     else:
+    #         params = params[params.v < thresh]
+    # except:
+    #     pass
     return params
 
 def filter_outliers(params, outlier_params = ('x','y','e','v','n'),
-                    neighbors=1000):
+                    neighbors=1000, outlier_thresh=0.1):
     scaler = RobustScaler()
-    of = LocalOutlierFactor(n_jobs=7, n_neighbors=neighbors)
+    of = LocalOutlierFactor(n_jobs=7, n_neighbors=neighbors, metric='minkowski',
+                            p=len(outlier_params), contamination=outlier_thresh)
 
     keys = params.keys()
     if 'n' in keys:
@@ -129,7 +145,7 @@ def filter_outliers(params, outlier_params = ('x','y','e','v','n'),
 
 
 
-def smooth_estimates(params, max_frames=0, hl=20):
+def smooth_estimates(params, max_frames=0, hl=3):
     if 'n' in params.keys():
         params_smooth = params.groupby('n').mean()
 

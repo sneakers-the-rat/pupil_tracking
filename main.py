@@ -15,9 +15,10 @@ from tqdm import tqdm
 
 import imops
 import runops
+import fitutils
 import model
 
-emod = measure.EllipseModel()
+
 
 ##############################
 # Initialization
@@ -77,7 +78,7 @@ if not os.path.exists(param_dir):
 ###############################
 # Get initial ROI and image preprocessing params
 
-files=['/home/lab/pupil_vids/test.mkv']
+files=['/home/lab/pupil_vids/nick4.avi']
 vid_fn = files[0]
 vid = cv2.VideoCapture(vid_fn)
 #vid.set(cv2.CAP_PROP_POS_MSEC, 350000)
@@ -125,6 +126,8 @@ pbar = tqdm(total=n_frames, position=0)
 params_frames = []
 results = []
 
+emod = measure.EllipseModel()
+
 x_list = []
 y_list = []
 a_list = []
@@ -158,6 +161,8 @@ for i in xrange(n_frames):
                                high_threshold=params['canny_high'], low_threshold=params['canny_low'])
 
     edges_rep = imops.repair_edges(edges, frame)
+    if not edges_rep:
+        continue
 
     edges_3 = np.repeat(edges[:,:,np.newaxis], 3, axis=2).astype(np.uint8)
     edges_3 = edges_3 * 255
@@ -195,7 +200,10 @@ for i in xrange(n_frames):
 
     cv2.imshow('run', np.vstack((frame_orig, edges_3, edges_rep_im)))
 
-
+ell_df = fitutils.clean_lists(x_list, y_list, a_list, b_list, t_list, v_list, n_list)
+ell_df = fitutils.basic_filter(ell_df, ix, iy, rad)
+ell_df_out = fitutils.filter_outliers(ell_df, neighbors=1000)
+ell_df_smooth = fitutils.smooth_estimates(ell_df_out, hl=2)
 
 
 

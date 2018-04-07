@@ -437,7 +437,7 @@ for i in xrange(len(ell_smooth)):
 
 
 
-writer.close()
+#writer.close()
 cv2.destroyAllWindows()
 
 ret, frame_orig = vid.read()
@@ -650,3 +650,61 @@ def order_points(edge_points):
             new_points.appendleft(edge_points[inds.pop(point),:])
 
     return np.row_stack(new_points)
+
+
+
+######################
+
+img_close = img.copy()
+for i, s in enumerate(closing_sizes):
+    img_close_temp = morphology.closing(img_close, selem=morphology.disk(s))
+    ax2.flatten()[i].imshow(img_close_temp)
+
+#######################
+
+from sklearn import mixture
+import itertools
+
+dpgmm = mixture.BayesianGaussianMixture(
+    n_components=3, covariance_type='full', weight_concentration_prior=1e-2,
+    weight_concentration_prior_type='dirichlet_process',
+    mean_precision_prior=1e-2, covariance_prior=1e0 * np.eye(8),
+    init_params="random", max_iter=100, random_state=2)
+dpgmm.fit(ell_df_out)
+
+def plot_samples(X, Y, n_components, index, title):
+    fig, ax = plt.subplots(8,1)
+    for i, color in zip(range(n_components), color_iter):
+        # as the DP will not use every component it has access to
+        # unless it needs it, we shouldn't plot the redundant
+        # components.
+        if not np.any(Y == i):
+            continue
+        for j in range(8):
+            ax[j].scatter(X[Y == i, 2], X[Y == i, j], .8, color=color)
+
+    ax.xlim(-6., 4. * np.pi - 6.)
+    ax.ylim(-5., 5.)
+    plt.title(title)
+    plt.xticks(())
+    plt.yticks(())
+
+color_iter = itertools.cycle(['navy', 'c', 'cornflowerblue', 'gold',
+                              'darkorange'])
+
+y_s = dpgmm.predict(ell_df_out)
+def plot_params(params, labels):
+    keys = params.keys()
+
+    if 'n' in keys:
+        fig, ax = plt.subplots(len(keys)-1, 1)
+        keys = [k for k in keys if k != 'n']
+        for i, x in enumerate(keys):
+            ax[i].scatter(params['n'], params[x], s=0.5, alpha=0.2, c=labels)
+            ax[i].set_ylabel(x)
+    else:
+        fig, ax = plt.subplots(len(keys), 1)
+
+        for i, x in enumerate(keys):
+            ax[i].scatter(params.index, params[x], s=0.5, alpha=0.2, c=labels)
+            ax[i].set_ylabel(x)
