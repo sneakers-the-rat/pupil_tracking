@@ -8,12 +8,12 @@ from sklearn.preprocessing import RobustScaler
 from scipy.spatial import distance
 from collections import deque as dq
 
-def clean_lists(x_list, y_list, a_list, b_list, t_list, v_list, n_list):
+def clean_lists(x_list, y_list, a_list, b_list, t_list, v_list, n_list, c_list):
     # wrap in dataframe
     params = pd.DataFrame({'x': x_list, 'y': y_list,
                                  'a': a_list, 'b': b_list,
                                  't': t_list, 'v': v_list,
-                                 'n': n_list})
+                                 'n': n_list, 'c': c_list})
     params = params.astype({'n': np.int})
 
     # redo coordinates so a is always larger than b, thetas are consistent
@@ -47,11 +47,11 @@ def basic_filter(params, ix, iy, rad, e_thresh=0.5, bright=True):
     #params = params.dropna()
 
     # remove ellipses outside some max allowed circle
-    in_circle = np.where((params.x-iy)**2+(params.y-ix)**2 < rad**2)[0]
-    params = params.iloc[in_circle,:]
+    #in_circle = np.where((params.x-iy)**2+(params.y-ix)**2 < rad**2)[0]
+    #params = params.iloc[in_circle,:]
     #
     # # and with negative x or y values
-    # params = params[np.logical_and(params.x>0, params.y>0)]
+    #params = params[np.logical_and(params.x>0, params.y>0)]
     #
     # # or outside say 5 stdevs
     # for col in ['a', 'b', 'x', 'y']:
@@ -77,6 +77,8 @@ def basic_filter(params, ix, iy, rad, e_thresh=0.5, bright=True):
     #         params = params[params.v < thresh]
     # except:
     #     pass
+
+
     return params
 
 def filter_outliers(params, outlier_params = ('x','y','e','v','n'),
@@ -125,23 +127,6 @@ def filter_outliers(params, outlier_params = ('x','y','e','v','n'),
         #         # find point with min distance (take horiz/vert points before diags)
         #         pt_i = min(connected_pts, key=connected_pts.get)
         #         new_pts.appendleft(e_pts[inds.pop(inds.index(pt_i))])
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 
@@ -216,3 +201,4 @@ def plot_params(params, color='k'):
             ax[i].set_ylabel(x)
 
 
+#def

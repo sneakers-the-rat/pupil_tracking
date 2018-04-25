@@ -2,7 +2,7 @@ import numpy as np
 import cv2
 from scipy.spatial.distance import euclidean
 from skimage import feature, morphology, img_as_float, draw, measure
-from itertools import count
+from itertools import count, cycle
 from time import time, sleep
 import multiprocessing as mp
 from tqdm import tqdm, trange
@@ -55,12 +55,17 @@ def draw_pupil(frame):
 
     return ix, iy, rad
 
-def set_params(vid, roi):
-    ret, frame = vid.read()
-    frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-    frame = imops.crop(frame, roi)
-    frame_params = imops.preprocess_image(frame, roi)
-    edges_params = imops.scharr_canny(frame_params, sigma=3)
+def set_params(files):
+    # cycle through files..
+    filecyc = cycle(files)
+    # start with the first video
+    vid = cv2.VideoCapture(filecyc.next())
+
+    # crop roi (x, y, width, height)
+    roi, frame = get_crop_roi(vid)
+
+    # draw pupil (sry its circular)
+    ix, iy, rad = draw_pupil(frame)
 
     # initial values, empirically set.
     # have to use ints with cv2's windows, we'll convert later
@@ -72,12 +77,12 @@ def set_params(vid, roi):
     closing_rad = 3
 
     cv2.namedWindow('params', flags=cv2.WINDOW_NORMAL)
-    cv2.createTrackbar('Sigmoid Cutoff', 'params', sig_cutoff, 100, imops.nothing)
-    cv2.createTrackbar('Sigmoid Gain', 'params', sig_gain, 20, imops.nothing)
-    cv2.createTrackbar('Gaussian Blur', 'params', canny_sig, 700, imops.nothing)
-    cv2.createTrackbar('Canny High Threshold', 'params', canny_high, 300, imops.nothing)
-    cv2.createTrackbar('Canny Low Threshold', 'params', canny_low, 300, imops.nothing)
-    cv2.createTrackbar('Closing Radius', 'params', closing_rad, 10, imops.nothing)
+    cv2.createTrackbar('Sigmoid Cutoff',       'params', sig_cutoff,  100, imops.nothing)
+    cv2.createTrackbar('Sigmoid Gain',         'params', sig_gain,    20,  imops.nothing)
+    cv2.createTrackbar('Gaussian Blur',        'params', canny_sig,   700, imops.nothing)
+    cv2.createTrackbar('Canny High Threshold', 'params', canny_high,  300, imops.nothing)
+    cv2.createTrackbar('Canny Low Threshold',  'params', canny_low,   300, imops.nothing)
+    cv2.createTrackbar('Closing Radius',       'params', closing_rad, 10,  imops.nothing)
 
     while True:
         k = cv2.waitKey(1) & 0xFF
@@ -85,20 +90,24 @@ def set_params(vid, roi):
             break
 
         ret, frame_orig = vid.read()
-        frame = cv2.cvtColor(frame_orig, cv2.COLOR_BGR2GRAY)
-        frame = imops.crop(frame, roi)
+        if ret == False:
+            # cycle to the next video (or restart) and skip this iter of param setting
+            vid = cv2.VideoCapture(filecyc.next())
+            continue
+        frame = frame_orig.copy()
 
-        sig_cutoff = cv2.getTrackbarPos('Sigmoid Cutoff', 'params')
-        sig_gain = cv2.getTrackbarPos('Sigmoid Gain', 'params')
-        canny_sig = cv2.getTrackbarPos('Gaussian Blur', 'params')
-        canny_high = cv2.getTrackbarPos('Canny High Threshold', 'params')
-        canny_low = cv2.getTrackbarPos('Canny Low Threshold', 'params')
+        sig_cutoff  = cv2.getTrackbarPos('Sigmoid Cutoff', 'params')
+        sig_gain    = cv2.getTrackbarPos('Sigmoid Gain', 'params')
+        canny_sig   = cv2.getTrackbarPos('Gaussian Blur', 'params')
+        canny_high  = cv2.getTrackbarPos('Canny High Threshold', 'params')
+        canny_low   = cv2.getTrackbarPos('Canny Low Threshold', 'params')
         closing_rad = cv2.getTrackbarPos('Closing Radius', 'params')
 
+        # see i toldya it would be fine to have ints...
         sig_cutoff = sig_cutoff / 100.
-        canny_sig = canny_sig / 100.
+        canny_sig  = canny_sig / 100.
         canny_high = canny_high / 100.
-        canny_low = canny_low / 100.
+        canny_low  = canny_low / 100.
 
         frame = imops.preprocess_image(frame, roi,
                                        sig_cutoff=sig_cutoff,
@@ -107,6 +116,7 @@ def set_params(vid, roi):
         edges_params = imops.scharr_canny(frame, sigma=canny_sig,
                                           high_threshold=canny_high, low_threshold=canny_low)
 
+        # TODO: Also respect grayscale param here
         frame_orig = cv2.cvtColor(frame_orig, cv2.COLOR_BGR2GRAY)
         frame_orig = imops.crop(frame_orig, roi)
         frame_orig = img_as_float(frame_orig)
@@ -114,12 +124,17 @@ def set_params(vid, roi):
         cv2.imshow('params', np.vstack([frame_orig, frame, edges_params]))
     cv2.destroyAllWindows()
 
+    # collect parameters
     params = {
         "sig_cutoff": sig_cutoff,
         "sig_gain": sig_gain,
         "canny_sig": canny_sig,
         "canny_high": canny_high,
-        "canny_low": canny_low
+        "canny_low": canny_low,
+        "mask" : {'x': ix, 'y': iy, 'r': rad},
+        "files": files,
+        "roi": roi,
+        "shape": (roi[3], roi[2]),
     }
 
     return params
@@ -194,11 +209,38 @@ def process_frames(frames, params, order):
 
     return order, ell_params.tolist()
 
-def play_fit(vid, roi, params):
+def process_frame(frame, params):
+    frame = imops.preprocess_image(frame, params['roi'],
+                                   sig_cutoff=params['sig_cutoff'],
+                                   sig_gain=params['sig_gain'])
+
+    # get gradients
+    # TODO: Is this necessary since it didn't prove to be faster???
+    grad_x, grad_y, edge_mag, angles = imops.edge_vectors(frame, sigma=params['canny_sig'], return_angles=True)
+
+    edges = imops.scharr_canny(frame, sigma=params['canny_sig'],
+                               high_threshold=params['canny_high'],
+                               low_threshold=params['canny_low'],
+                               grads={'grad_x': grad_x,
+                                      'grad_y': grad_y,
+                                      'edge_mag': edge_mag})
+
+    # TODO: option of repair all keeping originals
+    edges_rep = imops.repair_edges(edges, frame)
+
+    # return [(ellipse, n_pts)]
+    return [(imops.fit_ellipse(e), len(e)) for e in edges_rep]
+
+
+def play_fit(vid, roi, params, fps=30):
     thetas = np.linspace(0, np.pi * 2, num=200, endpoint=False)
 
     # start vid at first frame in params
-    first_frame = params.index.min()
+    if "n" in params.keys():
+
+        first_frame = params.n.min()
+    else:
+        first_frame = params.index.min()
 
     ret = vid.set(cv2.CAP_PROP_POS_FRAMES, first_frame)
 
@@ -256,7 +298,7 @@ def play_fit(vid, roi, params):
             draw.set_color(frame_orig, (e_points[:, 0] - 1, e_points[:, 1]+1), (1, 0, 0))
             draw.set_color(frame_orig, (e_points[:, 0] - 1, e_points[:, 1]-1), (1, 0, 0))
         cv2.imshow('play', frame_orig)
-        sleep(1./30)
+        sleep(1./fps)
 
         # frame_orig = frame_orig*255
         # frame_orig = frame_orig.astype(np.uint8)

@@ -13,6 +13,7 @@ from copy import copy
 from scipy.ndimage import (gaussian_filter,
                            generate_binary_structure, binary_erosion, label)
 from matplotlib import pyplot as plt
+import pandas as pd
 # http://cdn.intechopen.com/pdfs/33559/InTech-Methods_for_ellipse_detection_from_edge_maps_of_real_images.pdf
 
 def crop(im, roi):
@@ -50,9 +51,12 @@ def edges2xy(edges, which_edge=None, order=True):
     return edges_xy
 
 
-def preprocess_image(img, roi, gauss_sig=None, sig_cutoff=None, sig_gain=None, closing=3):
+def preprocess_image(img, roi = None, gauss_sig=None, sig_cutoff=None, sig_gain=None, closing=3):
     if len(img.shape)>2:
+        # TODO: this is what i'm talking about -- respect the --gray cmd line param.
         img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        img = crop(img, roi)
+    elif roi is not None:
         img = crop(img, roi)
     # otherwise we've got a recolored/cropped image already
 
@@ -107,8 +111,8 @@ def edge_vectors(frame, sigma=1, return_angles = False):
 
 
     """
-    grad_x = filters.gaussian(cv2.Scharr(frame, ddepth=-1, dx=1, dy=0), sigma=sigma)
-    grad_y = filters.gaussian(cv2.Scharr(frame, ddepth=-1, dx=0, dy=1), sigma=sigma)
+    grad_x = cv2.GaussianBlur(cv2.Scharr(frame, ddepth=-1, dx=1, dy=0), ksize=(0,0), sigmaX=sigma)
+    grad_y = cv2.GaussianBlur(cv2.Scharr(frame, ddepth=-1, dx=0, dy=1), ksize=(0,0), sigmaX=sigma)
 
     # Eigenvalues
     Axx = grad_x*grad_x
@@ -136,25 +140,34 @@ def edge_vectors(frame, sigma=1, return_angles = False):
         return grad_x, grad_y, edge_scale
 
 
-def scharr_canny(image, sigma, low_threshold=0.2, high_threshold=0.5):
+def scharr_canny(image, sigma, low_threshold=0.2, high_threshold=0.5, grads = None):
     # skimage's canny but we get scharr grads instead of sobel,
     # and use the eigenvalues of the structure tensor rather than the hypotenuse
+    # we can be passed a precomputed set of image gradients if we haven't already gotten them
 
-    isobel = cv2.GaussianBlur(cv2.Scharr(image, ddepth=-1, dx=0, dy=1), ksize=(0,0), sigmaX=sigma)
-    jsobel = cv2.GaussianBlur(cv2.Scharr(image, ddepth=-1, dx=1, dy=0), ksize=(0,0), sigmaX=sigma)
+    if grads is not None:
+        isobel = grads['grad_y']
+        jsobel = grads['grad_x']
+        abs_isobel = np.abs(isobel)
+        abs_jsobel = np.abs(jsobel)
+        magnitude = grads['edge_mag']
+    else:
+
+        isobel = cv2.GaussianBlur(cv2.Scharr(image, ddepth=-1, dx=0, dy=1), ksize=(0,0), sigmaX=sigma)
+        jsobel = cv2.GaussianBlur(cv2.Scharr(image, ddepth=-1, dx=1, dy=0), ksize=(0,0), sigmaX=sigma)
 
 
-    abs_isobel = np.abs(isobel)
-    abs_jsobel = np.abs(jsobel)
+        abs_isobel = np.abs(isobel)
+        abs_jsobel = np.abs(jsobel)
 
-    Axx = jsobel*jsobel
-    Axy = jsobel*isobel
-    Ayy = isobel*isobel
+        Axx = jsobel*jsobel
+        Axy = jsobel*isobel
+        Ayy = isobel*isobel
 
-    e1 = 0.5 * (Ayy + Axx - np.sqrt((Ayy - Axx) ** 2 + 4 * (Axy ** 2)))
-    e2 = 0.5 * (Ayy + Axx + np.sqrt((Ayy - Axx) ** 2 + 4 * (Axy ** 2)))
+        e1 = 0.5 * (Ayy + Axx - np.sqrt((Ayy - Axx) ** 2 + 4 * (Axy ** 2)))
+        e2 = 0.5 * (Ayy + Axx + np.sqrt((Ayy - Axx) ** 2 + 4 * (Axy ** 2)))
 
-    magnitude = e2-e1
+        magnitude = e2-e1
 
     # magnitude = np.hypot(isobel, jsobel)
     #
@@ -267,6 +280,49 @@ def scharr_canny(image, sigma, low_threshold=0.2, high_threshold=0.5):
     #output_mask = morphology.skeletonize(output_mask)
 
     return output_mask
+
+def parameterize_edges(edges, grad_x, grad_y, angles, small_thresh=20):
+    # reduce binary 2d edge image to parameters
+    edges = morphology.label(edges)
+
+    uq_edges, counts = np.unique(edges, return_counts = True)
+    uq_edges, counts = uq_edges[uq_edges>0], counts[1:]
+
+    if len(uq_edges) == 0:
+        return
+
+    # get x/y representation so we don't have to keep passing a buncha booleans
+    edges_xy = [edges2xy(edges, e) for e in uq_edges]
+
+    # delete tiny edges
+    edges_xy = [e for e in edges_xy if len(e)>small_thresh]
+    if len(edges_xy)==0:
+        return []
+
+    # break edges at corners and inflection points
+    edges_xy = break_corners(edges_xy)
+
+    # delete tiny edges
+    edges_xy = [e for e in edges_xy if len(e)>small_thresh]
+    if len(edges_xy)==0:
+        return []
+
+    # melt list of edge xy points to dataframe
+    edges_df = pd.DataFrame.from_records(edges_xy).T.melt(var_name="edge").dropna()
+    xy = np.row_stack(edges_df.value)
+    edges_df.drop('value', axis=1,inplace=True)
+    edges_df['x'], edges_df['y'] = xy[:,0], xy[:,1]
+
+    # add gradients and angles
+    edges_df['grad_x'] = grad_x[edges_df['x'], edges_df['y']]
+    edges_df['grad_y'] = grad_y[edges_df['x'], edges_df['y']]
+    edges_df['angle'] = angles[edges_df['x'], edges_df['y']]
+    return edges_df
+
+
+
+
+
 
 
 def repair_edges(edges, frame, sigma=3, small_thresh=20):
@@ -896,3 +952,61 @@ def line_mask(ends):
     D = d[j]
     aD = np.abs(D)
     return ends[0] + (np.outer(np.arange(aD + 1), d) + (aD >> 1)) // aD
+
+
+def measure_affinity(edges_xy, grads):
+    # given a dataframe with a multiindex, edge, points with x, y, grads, and angles
+
+    # get edge points
+    edge_points = np.row_stack([(e[0], e[-1]) for e in edges_xy])
+    edge_grads = np.row_stack([(e[0], e[-1]) for e in grads])
+
+    # get the  euclidean distances between points as a fraction of image size
+    dist_metric = distance.squareform(distance.pdist(edge_points))
+    grad_metric = distance.squareform(distance.pdist(edge_grads, "cosine"))
+
+    ## 3. edge affinity
+    # want edges that point at each other
+
+    # get direction of edge points from line segments
+    segs = [prasad_lines(e) for e in edges_xy]
+
+    # 3d array of the edge points and the neighboring segment vertex
+    edge_segs = np.row_stack([((e[0], e[1]), (e[-1], e[-2])) for e in segs])
+
+    # subtract neighboring segment vertex from edge point to get vector pointing
+    # in direction of edge
+    # we also get the midpoints of the last segment,
+    # because pointing towards the actual last point in the segment can be noisy
+    edge_vects = normalize(edge_segs[:, 0, :] - edge_segs[:, 1, :])
+    edge_mids = np.mean(edge_segs, axis=1)
+
+    # cosine distance between direction of edge at endpoints and direction to other points
+    # note this distance is asymmetrical, affinity from point in row to point in column
+    affinity_metric = np.row_stack(
+        [distance.cdist(edge_vects[i, :].reshape(1, 2), edge_mids - edge_points[i, :], "cosine")
+         for i in range(len(edge_segs))]
+    )
+
+    # get upper/lower indices manually so they match up right
+    triu_indices = np.triu_indices(affinity_metric.shape[0], k=1)
+    tril_indices = triu_indices[::-1]
+
+    # average top and bottom triangles - both edges should point at each other
+    pair_affinity = np.mean((affinity_metric[tril_indices],
+                             affinity_metric[triu_indices]), axis=0)
+    affinity_metric[tril_indices] = pair_affinity
+    affinity_metric[triu_indices] = pair_affinity
+
+    # Clean up & combine merge metrics
+    # want high values to be good, and for vals to be 0-1
+    dist_metric = 1 - ((dist_metric - np.min(dist_metric)) / (np.max(dist_metric) - np.min(dist_metric)))
+    # dist_metric = 1-dist_metric
+    grad_metric = 1 - (grad_metric / 2.)  # cosine distance is 0-2
+    affinity_metric = 1 - (affinity_metric / 2.)
+
+    merge_score = dist_metric ** 2 * grad_metric ** 2 * affinity_metric ** 2
+    merge_score[np.isnan(merge_score)] = 0.
+    merge_score[triu_indices] = 0
+
+    return merge_score

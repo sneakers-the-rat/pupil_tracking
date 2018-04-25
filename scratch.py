@@ -708,3 +708,82 @@ def plot_params(params, labels):
         for i, x in enumerate(keys):
             ax[i].scatter(params.index, params[x], s=0.5, alpha=0.2, c=labels)
             ax[i].set_ylabel(x)
+
+edges_xy = [edge[['x','y']].get_values() for i, edge in frame_df.groupby('edge')['x','y']]
+grads = [edge[['grad_x','grad_y']].get_values() for i, edge in frame_df.groupby('edge')]
+angles = [edge[['angle']].get_values() for i, edge in frame_df.groupby('edge')]
+def measure_affinity(edges_xy, grads):
+    # given a dataframe with a multiindex, edge, points with x, y, grads, and angles
+
+    # get edge points
+    edge_points = np.row_stack([(e[0], e[-1]) for e in edges_xy])
+    edge_grads = np.row_stack([(e[0], e[-1]) for e in grads])
+
+    # get the  euclidean distances between points as a fraction of image size
+    dist_metric = distance.squareform(distance.pdist(edge_points))
+    grad_metric = distance.squareform(distance.pdist(edge_grads, "cosine"))
+
+    ## 3. edge affinity
+    # want edges that point at each other
+
+    # get direction of edge points from line segments
+    segs = [prasad_lines(e) for e in edges_xy]
+
+    # 3d array of the edge points and the neighboring segment vertex
+    edge_segs = np.row_stack([((e[0],e[1]),(e[-1],e[-2])) for e in segs])
+
+    # subtract neighboring segment vertex from edge point to get vector pointing
+    # in direction of edge
+    # we also get the midpoints of the last segment,
+    # because pointing towards the actual last point in the segment can be noisy
+    edge_vects = normalize(edge_segs[:,0,:] - edge_segs[:,1,:])
+    edge_mids = np.mean(edge_segs, axis=1)
+
+    # cosine distance between direction of edge at endpoints and direction to other points
+    # note this distance is asymmetrical, affinity from point in row to point in column
+    affinity_metric = np.row_stack(
+        [distance.cdist(edge_vects[i,:].reshape(1,2), edge_mids-edge_points[i,:], "cosine")
+         for i in range(len(edge_segs))]
+    )
+
+    # get upper/lower indices manually so they match up right
+    triu_indices = np.triu_indices(affinity_metric.shape[0], k= 1)
+    tril_indices = triu_indices[::-1]
+
+    # average top and bottom triangles - both edges should point at each other
+    pair_affinity = np.mean((affinity_metric[tril_indices],
+                             affinity_metric[triu_indices]), axis=0)
+    affinity_metric[tril_indices] = pair_affinity
+    affinity_metric[triu_indices] = pair_affinity
+
+    # Clean up & combine merge metrics
+    # want high values to be good, and for vals to be 0-1
+    dist_metric = 1-((dist_metric-np.min(dist_metric))/(np.max(dist_metric)-np.min(dist_metric)))
+    #dist_metric = 1-dist_metric
+    grad_metric = 1-(grad_metric/2.) # cosine distance is 0-2
+    affinity_metric = 1-(affinity_metric/2.)
+
+    merge_score = dist_metric**2 * grad_metric**2 * affinity_metric**2
+    merge_score[np.isnan(merge_score)] = 0.
+    merge_score[triu_indices] = 0
+
+    return merge_score
+
+from itertools import combinations
+def collapse_unique(angles):
+    # get ends of angles
+    edge_angles = np.row_stack([np.column_stack((np.min(e), np.max(e), np.median(e))) for e in angles])
+    # find the ones that wrap around zero
+    rev_inds = edge_angles[:,1]-edge_angles[:,0]>5.
+    edge_angles[rev_inds,0:2] = np.fliplr(edge_angles[rev_inds,0:2])
+    combo_mask = np.zeros((len(angles), len(angles)), dtype=np.bool)
+
+    for edge_1, edge_2 in combinations(enumerate(edge_angles), 2):
+        ind_1, angles_1 = edge_1
+        ind_2, angles_2 = edge_2
+
+        print(angles_1, angles_2)
+        # check if overlap
+        if angles_1[0] < angles_1[1]:
+            np.logical_and(angles_1[0] >= angles_2, angles_2 >= angles_1[1])
+
