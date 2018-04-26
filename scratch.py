@@ -787,3 +787,20 @@ def collapse_unique(angles):
         if angles_1[0] < angles_1[1]:
             np.logical_and(angles_1[0] >= angles_2, angles_2 >= angles_1[1])
 
+
+
+#########################
+ell_df = pd.read_csv('/home/lab/pupellipse/data/EyeTrig.csv')
+ell_df['gn'] = (ell_df.g-ell_df.g.min())/(ell_df.g.max()-ell_df.g.min())
+ell_df['cn'] = (ell_df.c-ell_df.c.min())/(ell_df.c.max()-ell_df.c.min())
+ell_df['en'] = (ell_df.e-ell_df.e.min())/(ell_df.e.max()-ell_df.e.min())
+ell_frame = ell_df.groupby("n")
+idxes = []
+for name, group in ell_frame:
+    # TODO: once V is fixed, also add variance, and then use V adjusted by area - a high V over a large area is better than a high V over a small area
+
+    good_vals = group.gn * group.cn * group.en
+    idxes.append(group.loc[good_vals.idxmax()][0])
+
+only_good = ell_df.loc[np.isin(ell_df['Unnamed: 0'], idxes)]
+

@@ -17,6 +17,7 @@ import fitutils
 
 
 def run(files, params, data_dir):
+    thetas = np.linspace(0, np.pi * 2, num=200, endpoint=False)
     # loop through videos...
     for fn in files:
 
@@ -35,6 +36,7 @@ def run(files, params, data_dir):
         n_list = [] # frame number
         v_list = [] # mean value of points contained within ellipse
         c_list = [] # coverage - n_points / circumference
+        g_list = [] # gradient - mean gradient of points on edge
 
         for i in trange(total_frames, position=0):
             ret, frame = vid.read()
@@ -49,7 +51,12 @@ def run(files, params, data_dir):
             n_frame = frame_counter.next()
 
             # Chew up a frame, return a list of ellipses
-            ellipses = runops.process_frame(frame, params)
+            try:
+                ellipses, frame_preproc, edge_mag = runops.process_frame(frame, params)
+            except TypeError:
+                # if doesn't fit any ellipses, will return a single None, which will throw a
+                # typeerror because it tries to unpack None into the three values above...
+                continue
 
             for e, n_pts in ellipses:
                 # ellipses actually gets returned as a tuple (ellipse object, n_pts)
@@ -64,10 +71,11 @@ def run(files, params, data_dir):
                 n_list.append(n_frame)
 
                 # get mean darkness within each ellipse
+                # TODO: Validate - make sure we're getting the right shit here.
                 ell_mask_y, ell_mask_x = draw.ellipse(e.params[0], e.params[1], e.params[2], e.params[3],
-                                                      shape=(frame.shape[1], frame.shape[0]),
+                                                      shape=(frame_preproc.shape[1], frame_preproc.shape[0]),
                                                       rotation=e.params[4])
-                v_list.append(np.mean(frame[ell_mask_x, ell_mask_y]))
+                v_list.append(np.mean(frame_preproc[ell_mask_x, ell_mask_y]))
 
                 # coverage - number of points vs. circumference
                 # perim: https://stackoverflow.com/a/42311034
@@ -77,8 +85,15 @@ def run(files, params, data_dir):
 
                 c_list.append(float(n_pts)/perimeter)
 
+                # get the mean edge mag for predicted points on the ellipse,
+                # off-target ellipses often go through the pupil aka through areas with low gradients...
+                e_points = np.round(e.predict_xy(thetas)).astype(np.int)
+                e_points[:,0] = np.clip(e_points[:,0], 0, frame_preproc.shape[0]-1)
+                e_points[:, 1] = np.clip(e_points[:,1], 0, frame_preproc.shape[1]-1)
+                g_list.append(np.mean(edge_mag[e_points[:,0], e_points[:,1]]))
+
         # clean and combine parameter lists
-        ell_df = fitutils.clean_lists(x_list, y_list, a_list, b_list, t_list, v_list, n_list, c_list)
+        ell_df = fitutils.clean_lists(x_list, y_list, a_list, b_list, t_list, v_list, n_list, c_list, g_list)
         # remove extremely bad ellipses
         ell_df = fitutils.basic_filter(ell_df, params['mask']['x'], params['mask']['y'], params['mask']['r'])
         # remove more bad ellipses with knn outlier detection

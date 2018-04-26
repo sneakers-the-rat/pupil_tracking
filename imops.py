@@ -325,7 +325,7 @@ def parameterize_edges(edges, grad_x, grad_y, angles, small_thresh=20):
 
 
 
-def repair_edges(edges, frame, sigma=3, small_thresh=20):
+def repair_edges(edges, frame, sigma=3, small_thresh=20, grads=None):
     # connect contiguous edges, disconnect edges w/ sharp angles
     # expect a binary edge image, like from feature.canny
     # im_grad should be complex (array of vectors)
@@ -369,7 +369,10 @@ def repair_edges(edges, frame, sigma=3, small_thresh=20):
     #     return []
 
     # reconnect edges based on position, image gradient, and edge affinity
-    edges_xy = merge_curves(edges_xy, frame, sigma=sigma)
+    if grads is not None:
+        edges_xy = merge_curves(edges_xy, frame, sigma=sigma, grads=grads)
+    else:
+        edges_xy = merge_curves(edges_xy, frame, sigma=sigma, grads=grads)
 
     # final round of breaking curves if we introduced any bad ones in our merge
     edges_xy = break_corners(edges_xy)
@@ -481,7 +484,8 @@ def remove_tiny_edges(edges, thresh=30):
     edges[~np.isin(label_edges, uq_edges)] = 0
     return edges
 
-def merge_curves(edges_xy, frame, sigma=3, threshold=0.3):
+def merge_curves(edges_xy, frame, sigma=3, threshold=0.5, keep_originals=True, only_max=False,
+                 grads=False):
     '''
     Given a binary array of edges and a grayscale image,
     generate three metrics of continuity for corner points (edges of edges):
@@ -500,7 +504,10 @@ def merge_curves(edges_xy, frame, sigma=3, threshold=0.3):
     edge_points = np.row_stack([(e[0], e[-1]) for e in edges_xy])
 
     # image gradients
-    grad_x, grad_y, edge_scale = edge_vectors(frame, sigma=sigma)
+    if not grads:
+        grad_x, grad_y, edge_scale = edge_vectors(frame, sigma=sigma)
+    else:
+        grad_x, grad_y, edge_scale = grads['grad_x'], grads['grad_y'], grads['edge_mag']
 
     ###################
     # Continuity metrics
@@ -562,10 +569,11 @@ def merge_curves(edges_xy, frame, sigma=3, threshold=0.3):
 
     # zero nonmax joins (only want to join each end one time at most..
     # only keep scores if mutually max'd (avoids 3-way joins)
-    col_max = np.argmax(merge_score, axis=0)
-    dupe_mask = np.ones_like(merge_score, dtype=np.bool)
-    dupe_mask[col_max[col_max], col_max] = 0
-    merge_score[dupe_mask] = 0.
+    if only_max:
+        col_max = np.argmax(merge_score, axis=0)
+        dupe_mask = np.ones_like(merge_score, dtype=np.bool)
+        dupe_mask[col_max[col_max], col_max] = 0
+        merge_score[dupe_mask] = 0.
 
     # now only need triangle to avoid dupes
     merge_score[triu_indices] = 0.
@@ -603,9 +611,12 @@ def merge_curves(edges_xy, frame, sigma=3, threshold=0.3):
         newsegs.append(newseg)
 
     # now we can remove the original segs and append
-    edges_xy = [e for i, e in enumerate(edges_xy) if i not in merge_points.flatten()//2]
+    if keep_originals == False:
+        edges_xy = [e for i, e in enumerate(edges_xy) if i not in merge_points.flatten()//2]
+
     edges_xy.extend(newsegs)
 
+    # TODO: Return merge score as well
     return edges_xy
 
 def positive_convexity(edges, frame, brightness=True):

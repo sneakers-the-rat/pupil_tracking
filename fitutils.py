@@ -8,12 +8,13 @@ from sklearn.preprocessing import RobustScaler
 from scipy.spatial import distance
 from collections import deque as dq
 
-def clean_lists(x_list, y_list, a_list, b_list, t_list, v_list, n_list, c_list):
+def clean_lists(x_list, y_list, a_list, b_list, t_list, v_list, n_list, c_list, g_list):
     # wrap in dataframe
     params = pd.DataFrame({'x': x_list, 'y': y_list,
                                  'a': a_list, 'b': b_list,
                                  't': t_list, 'v': v_list,
-                                 'n': n_list, 'c': c_list})
+                                 'n': n_list, 'c': c_list,
+                                 'g': g_list})
     params = params.astype({'n': np.int})
 
     # redo coordinates so a is always larger than b, thetas are consistent

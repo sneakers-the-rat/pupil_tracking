@@ -1,11 +1,15 @@
+import os
 import numpy as np
 import cv2
 from scipy.spatial.distance import euclidean
 from skimage import feature, morphology, img_as_float, draw, measure
+from skvideo import io
 from itertools import count, cycle
 from time import time, sleep
 import multiprocessing as mp
 from tqdm import tqdm, trange
+import pandas as pd
+import json
 
 import imops
 import fitutils
@@ -203,7 +207,10 @@ def process_frames(frames, params, order):
             ell_mask_y, ell_mask_x = draw.ellipse(ell_params[0], ell_params[1], ell_params[2], ell_params[3],
                                     shape=(labeled_edges.shape[1], labeled_edges.shape[0]), rotation=ell_params[4])
 
+
             v_list.append(np.mean(frame[ell_mask_x, ell_mask_y]))
+
+
 
     ell_params = fitutils.clean_lists(x_list, y_list, a_list, b_list, t_list, v_list, n_list)
 
@@ -215,8 +222,7 @@ def process_frame(frame, params):
                                    sig_gain=params['sig_gain'])
 
     # get gradients
-    # TODO: Is this necessary since it didn't prove to be faster???
-    grad_x, grad_y, edge_mag, angles = imops.edge_vectors(frame, sigma=params['canny_sig'], return_angles=True)
+    grad_x, grad_y, edge_mag = imops.edge_vectors(frame, sigma=params['canny_sig'], return_angles=False)
 
     edges = imops.scharr_canny(frame, sigma=params['canny_sig'],
                                high_threshold=params['canny_high'],
@@ -225,11 +231,15 @@ def process_frame(frame, params):
                                       'grad_y': grad_y,
                                       'edge_mag': edge_mag})
 
-    # TODO: option of repair all keeping originals
-    edges_rep = imops.repair_edges(edges, frame)
+    edges_rep = imops.repair_edges(edges, frame, grads={'grad_x': grad_x,
+                                                        'grad_y': grad_y,
+                                                        'edge_mag': edge_mag})
 
     # return [(ellipse, n_pts)]
-    return [(imops.fit_ellipse(e), len(e)) for e in edges_rep]
+    try:
+        return [(imops.fit_ellipse(e), len(e)) for e in edges_rep], frame, edge_mag
+    except TypeError:
+        return None
 
 
 def play_fit(vid, roi, params, fps=30):
@@ -306,5 +316,70 @@ def play_fit(vid, roi, params, fps=30):
         # writer.writeFrame(frame_orig)
 
     cv2.destroyAllWindows()
+
+def video_from_params(param_fn, ell_fn, which_vid = 0):
+    thetas = np.linspace(0, np.pi * 2, num=300, endpoint=False)
+
+    # load params from .json file, vid filenames will be in there
+    with open(param_fn, 'r') as param_f:
+        params = json.load(param_f)
+
+    # for now just do one video
+    vid_fn = str(params['files'][which_vid])
+
+    vid = cv2.VideoCapture(vid_fn)
+    total_frames = int(vid.get(cv2.CAP_PROP_FRAME_COUNT))
+
+    ell_df = pd.read_csv(ell_fn)
+
+    vid_path, vid_name = os.path.split(vid_fn)
+    vid_name = vid_name.rsplit('.',1)[0] + "_ellipses_2_good.mp4"
+    vid_out_fn = vid_path+"/"+vid_name
+
+
+    writer = io.FFmpegWriter(vid_out_fn, outputdict={'-vcodec': 'libx264'})
+
+    emod = measure.EllipseModel()
+
+    ell_frame = ell_df.groupby('n')
+
+    for i in trange(total_frames):
+
+        ret, frame = vid.read()
+        if ret == False:
+            break
+        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        frame = imops.crop(frame, params['roi'])
+        frame = img_as_float(frame)
+
+        try:
+            ell_rows = ell_frame.get_group(i)
+
+            for i, e in ell_rows.iterrows():
+                e_points = emod.predict_xy(thetas, params=(e.x, e.y, e.a, e.b, e.t))
+                e_points = e_points.astype(np.int)
+
+                draw.set_color(frame, (e_points[:, 0], e_points[:, 1]), (1, 0, 0))
+                draw.set_color(frame, (e_points[:, 0] + 1, e_points[:, 1]), (1, 0, 0))
+                draw.set_color(frame, (e_points[:, 0] - 1, e_points[:, 1]), (1, 0, 0))
+                draw.set_color(frame, (e_points[:, 0], e_points[:, 1] + 1), (1, 0, 0))
+                draw.set_color(frame, (e_points[:, 0], e_points[:, 1] - 1), (1, 0, 0))
+                draw.set_color(frame, (e_points[:, 0] + 1, e_points[:, 1] + 1), (1, 0, 0))
+                draw.set_color(frame, (e_points[:, 0] + 1, e_points[:, 1] - 1), (1, 0, 0))
+                draw.set_color(frame, (e_points[:, 0] - 1, e_points[:, 1] + 1), (1, 0, 0))
+                draw.set_color(frame, (e_points[:, 0] - 1, e_points[:, 1] - 1), (1, 0, 0))
+
+
+        except KeyError:
+            # no ellipses this frame, just write frame
+            pass
+
+        writer.writeFrame(frame*255)
+
+    writer.close()
+
+
+
+
 
 
