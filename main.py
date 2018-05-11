@@ -13,6 +13,7 @@ import runops
 import fitutils
 
 
+
 ##################################
 
 
@@ -45,7 +46,7 @@ def run(files, params, data_dir):
                 # aka didn't return a frame
                 # so
                 # yno
-                # we got ta take a
+                # we got ta take aV_list, w_list, A_list, z_list
                 break
 
             n_frame = frame_counter.next()
@@ -77,6 +78,8 @@ def run(files, params, data_dir):
                                                       rotation=e.params[4])
                 v_list.append(np.mean(frame_preproc[ell_mask_x, ell_mask_y]))
 
+
+
                 # coverage - number of points vs. circumference
                 # perim: https://stackoverflow.com/a/42311034
                 perimeter = np.pi * (3 * (e.params[2] + e.params[3]) -
@@ -106,7 +109,7 @@ def run(files, params, data_dir):
 
         # save ellipses to file
         vid_name = os.path.basename(fn).rsplit('.', 1)[0]
-        save_fn = os.path.join(data_dir, vid_name+".csv")
+        save_fn = os.path.join(data_dir, "Ellall_" + vid_name + ".csv")
         ell_df.to_csv(save_fn)
 
 

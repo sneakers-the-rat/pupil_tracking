@@ -333,7 +333,7 @@ def video_from_params(param_fn, ell_fn, which_vid = 0):
     ell_df = pd.read_csv(ell_fn)
 
     vid_path, vid_name = os.path.split(vid_fn)
-    vid_name = vid_name.rsplit('.',1)[0] + "_ellipses_2_good.mp4"
+    vid_name = "Ellone_" + vid_name.rsplit('.',1)[0] + ".mp4"
     vid_out_fn = vid_path+"/"+vid_name
 
 
@@ -377,8 +377,6 @@ def video_from_params(param_fn, ell_fn, which_vid = 0):
         writer.writeFrame(frame*255)
 
     writer.close()
-
-
 
 
 

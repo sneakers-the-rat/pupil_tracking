@@ -790,6 +790,13 @@ def collapse_unique(angles):
 
 
 #########################
+import pandas as pd
+import numpy as np
+import json
+import os
+import runops
+
+param_fn = '/home/lab/pupellipse/params/eyetrig_18-05-01-1652.json'
 ell_df = pd.read_csv('/home/lab/pupellipse/data/EyeTrig.csv')
 ell_df['gn'] = (ell_df.g-ell_df.g.min())/(ell_df.g.max()-ell_df.g.min())
 ell_df['cn'] = (ell_df.c-ell_df.c.min())/(ell_df.c.max()-ell_df.c.min())
@@ -803,4 +810,3 @@ for name, group in ell_frame:
     idxes.append(group.loc[good_vals.idxmax()][0])
 
 only_good = ell_df.loc[np.isin(ell_df['Unnamed: 0'], idxes)]
-
