@@ -23,6 +23,8 @@ import fitutils
 
 import imops
 
+import multiprocessing as mp
+
 def crop(im, roi):
     return im[roi[1]:roi[1]+roi[3], roi[0]:roi[0]+roi[2]]
 
@@ -810,3 +812,37 @@ for name, group in ell_frame:
     idxes.append(group.loc[good_vals.idxmax()][0])
 
 only_good = ell_df.loc[np.isin(ell_df['Unnamed: 0'], idxes)]
+
+
+########################3
+# multiprocessing tests
+
+from tqdm import trange
+from itertools import count
+
+def worker(input, output, params):
+    for frame, n in iter(input.get, 'END'):
+        result = runops.process_frame_all(frame, params, n)
+        output.put(result)
+
+def test(params, n_proc=7):
+    vid = cv2.VideoCapture(params['files'][0])
+    total_frames = int(vid.get(cv2.CAP_PROP_FRAME_COUNT))
+
+    # Create queues
+    task_queue = mp.Queue()
+    done_queue = mp.Queue()
+
+
+    for i in range(n_proc):
+        mp.Process(target=worker, args=(task_queue, done_queue, params)).start()
+
+    for i in trange(100):
+        ret, frame = vid.read()
+        n_frame = vid.get(cv2.CAP_PROP_POS_FRAMES)
+
+        task_queue.put((frame, n_frame))
+
+    results = []
+    for i in range(100):
+        results.append(done_queue.get())

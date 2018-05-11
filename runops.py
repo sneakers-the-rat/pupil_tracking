@@ -146,80 +146,92 @@ def set_params(files):
 def serve_frames(vid, output):
     pass
 
-def process_frames(frames, params, order):
-    # do the thing
-    frames = frames.copy()
-    ell_params = None
-
-    proc = mp.current_process()
-    proc_num = int(proc.name[-1])
-
-    frame_counter = count()
-
-    # get params
-    roi = params['roi']
-
-
-    # frame_params = np.ndarray(shape=(0, 7))
-    x_list = []
-    y_list = []
-    a_list = []
-    b_list = []
-    t_list = []
-    n_list = []
-    v_list = []
-    print(proc_num)
-    pbar = tqdm(total=frames.shape[2], position=10)
-
-    for i in xrange(frames.shape[2]):
-        frame = frames[:,:,i].squeeze()
-        n_frame = frame_counter.next()
-        pbar.update()
-
-        frame = imops.preprocess_image(frame, params['roi'],
-                                       sig_cutoff=params['sig_cutoff'],
-                                       sig_gain=params['sig_gain'])
-
-        # canny edge detection & reshaping coords
-        edges = imops.scharr_canny(frame, sigma=params['canny_sig'],
-                                          high_threshold=params['canny_high'], low_threshold=params['canny_low'])
-
-        edges = imops.repair_edges(edges, frame)
-
-
-        labeled_edges = morphology.label(edges)
-
-        uq_edges = np.unique(labeled_edges)
-        uq_edges = uq_edges[uq_edges>0]
-        ellipses = [imops.fit_ellipse(labeled_edges, e) for e in uq_edges]
-        ell_pts = np.ndarray(shape=(0,2))
-        for e in ellipses:
-            if not e:
-                continue
-
-            x_list.append(e.params[0])
-            y_list.append(e.params[1])
-            a_list.append(e.params[2])
-            b_list.append(e.params[3])
-            t_list.append(e.params[4])
-            n_list.append(n_frame)
-            # get mean darkness
-            ell_mask_y, ell_mask_x = draw.ellipse(ell_params[0], ell_params[1], ell_params[2], ell_params[3],
-                                    shape=(labeled_edges.shape[1], labeled_edges.shape[0]), rotation=ell_params[4])
-
-
-            v_list.append(np.mean(frame[ell_mask_x, ell_mask_y]))
-
-
-
-    ell_params = fitutils.clean_lists(x_list, y_list, a_list, b_list, t_list, v_list, n_list)
-
-    return order, ell_params.tolist()
-
-def process_frame(frame, params):
-    frame = imops.preprocess_image(frame, params['roi'],
+def process_frame_all(frame, params, n):
+    frame = imops.preprocess_image(frame,
                                    sig_cutoff=params['sig_cutoff'],
                                    sig_gain=params['sig_gain'])
+
+    # get gradients
+    grad_x, grad_y, edge_mag = imops.edge_vectors(frame, sigma=params['canny_sig'], return_angles=False)
+
+    edges = imops.scharr_canny(frame, sigma=params['canny_sig'],
+                               high_threshold=params['canny_high'],
+                               low_threshold=params['canny_low'],
+                               grads={'grad_x': grad_x,
+                                      'grad_y': grad_y,
+                                      'edge_mag': edge_mag})
+
+    edges_rep = imops.repair_edges(edges, frame, grads={'grad_x': grad_x,
+                                                        'grad_y': grad_y,
+                                                        'edge_mag': edge_mag})
+
+    if edges_rep is None:
+        return {}
+    ellipses = [(imops.fit_ellipse(e), len(e)) for e in edges_rep]
+
+    # appending to lists is actually pretty fast in python when dealing w/ uncertain quantities
+    # store ellipse parameters here, rejoin into a pandas dataframe at the end
+    ret = {
+        'x': [], # x position of ellipse center
+        'y': [],  # y position of ellipse center
+        'a': [],  # major axis (enforced when lists are combined - fitutils.clean_lists)
+        'b': [],  # minor axis ("")
+        't': [],  # theta, angle of a from x axis, radians, increasing counterclockwise
+        'n': [],  # frame number
+        #'v': [],  # mean value of points contained within ellipse
+        'c': [],  # coverage - n_points/perimeter
+        'g': []  # gradient magnitude of edge points
+    }
+
+    for e, n_pts in ellipses:
+        if not e:
+            continue
+
+        ret['x'].append(e.params[0])
+        ret['y'].append(e.params[1])
+        ret['a'].append(e.params[2])
+        ret['b'].append(e.params[3])
+        ret['t'].append(e.params[4])
+        ret['n'].append(n)
+
+        # ell_mask_y, ell_mask_x = draw.ellipse(e.params[0], e.params[1], e.params[2], e.params[3],
+        #                                       shape=(frame.shape[1], frame.shape[0]),
+        #                                       rotation=e.params[4])
+        # v_list.append(np.mean(frame[ell_mask_x, ell_mask_y]))
+
+        # coverage - number of points vs. circumference
+        # perim: https://stackoverflow.com/a/42311034
+        perimeter = np.pi * (3 * (e.params[2] + e.params[3]) -
+                             np.sqrt((3 * e.params[2] + e.params[3]) *
+                                     (e.params[2] + 3 * e.params[3])))
+
+        ret['c'].append(float(n_pts) / perimeter)
+
+        # get the mean edge mag for predicted points on the ellipse,
+        # off-target ellipses often go through the pupil aka through areas with low gradients...
+        e_points = np.round(e.predict_xy(np.linspace(0,np.pi*2, 200))).astype(np.int)
+        e_points[:, 0] = np.clip(e_points[:, 0], 0, frame.shape[0] - 1)
+        e_points[:, 1] = np.clip(e_points[:, 1], 0, frame.shape[1] - 1)
+        ret['g'].append(np.mean(edge_mag[e_points[:, 0], e_points[:, 1]]))
+
+
+    return ret
+
+
+
+
+
+
+def process_frame(frame, params, crop=True, preproc=True):
+    if preproc:
+        if crop:
+            frame = imops.preprocess_image(frame, params['roi'],
+                                           sig_cutoff=params['sig_cutoff'],
+                                           sig_gain=params['sig_gain'])
+        else:
+            frame = imops.preprocess_image(frame,
+                                           sig_cutoff=params['sig_cutoff'],
+                                           sig_gain=params['sig_gain'])
 
     # get gradients
     grad_x, grad_y, edge_mag = imops.edge_vectors(frame, sigma=params['canny_sig'], return_angles=False)

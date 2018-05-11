@@ -1,4 +1,6 @@
 import numpy as np
+np.seterr(divide='ignore')
+np.seterr(invalid='ignore')
 import cv2
 from scipy.spatial.distance import euclidean
 from scipy.spatial import distance
@@ -375,7 +377,10 @@ def repair_edges(edges, frame, sigma=3, small_thresh=20, grads=None):
         edges_xy = merge_curves(edges_xy, frame, sigma=sigma, grads=grads)
 
     # final round of breaking curves if we introduced any bad ones in our merge
-    edges_xy = break_corners(edges_xy)
+    # edges_xy = break_corners(edges_xy)
+    # edges_xy = [e for e in edges_xy if len(e) > small_thresh]
+    # if len(edges_xy) == 0:
+    #     return []
 
     return edges_xy
 
