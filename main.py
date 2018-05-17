@@ -40,7 +40,7 @@ def run_mp(file, params, data_dir, n_proc=7):
     #grabber = mp.Process(target=workers.result_grabber, args=(done_queue,))
     #grabber.start()
 
-    for i in trange(500, position=0):
+    for i in trange(total_frames, position=0):
         ret, frame = vid.read()
         frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         frame = imops.crop(frame, params['roi'])
@@ -89,7 +89,7 @@ def run(files, params, data_dir):
         # g_list = [] # gradient magnitude of edge points
 
         results = []
-        for i in trange(500, position=1):
+        for i in trange(total_frames, position=1):
             ret, frame = vid.read()
             if ret == False:
                 # ret aka "if return == true"
@@ -152,7 +152,7 @@ def run(files, params, data_dir):
             #     g_list.append(np.mean(edge_mag[e_points[:,0], e_points[:,1]]))
 
         got_results = []
-        for r in tqdm(results, total=500, position=2):
+        for r in tqdm(results, total=total_frames, position=2):
             got_results.append(r.get())
 
         flat_results = got_results[0]
