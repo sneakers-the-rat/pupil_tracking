@@ -38,7 +38,7 @@ def clean_lists(x_list, y_list, a_list, b_list, t_list, v_list, n_list, c_list, 
 
     return params
 
-def basic_filter(params, ix, iy, rad, e_thresh=0.5, bright=True):
+def basic_filter(params, ix, iy, rad, e_thresh=0.7, bright=True):
     # remove extremely bad ellipses
     # ix, iy, rad: circle params for largest possible pupil
     # e_thresh: acceptable eccentricity threshold (minor/major)

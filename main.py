@@ -106,7 +106,7 @@ def run(files, params, data_dir):
 
         # save ellipses to file
         vid_name = os.path.basename(fn).rsplit('.', 1)[0]
-        save_fn = os.path.join(data_dir, vid_name+".csv")
+        save_fn = os.path.join(data_dir, "Ellall_" + vid_name +".csv")
         ell_df.to_csv(save_fn)
 
 

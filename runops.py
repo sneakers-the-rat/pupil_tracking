@@ -323,7 +323,7 @@ def video_from_params(param_fn, ell_fn, which_vid = 0):
     # load params from .json file, vid filenames will be in there
     with open(param_fn, 'r') as param_f:
         params = json.load(param_f)
-
+    # params = param_fn # if get TypeError: coercing to Unicode: need string or buffer, dict found
     # for now just do one video
     vid_fn = str(params['files'][which_vid])
 
@@ -333,7 +333,7 @@ def video_from_params(param_fn, ell_fn, which_vid = 0):
     ell_df = pd.read_csv(ell_fn)
 
     vid_path, vid_name = os.path.split(vid_fn)
-    vid_name = vid_name.rsplit('.',1)[0] + "_ellipses_2_good.mp4"
+    vid_name = "Ellone_" + vid_name.rsplit('.',1)[0] + ".mp4"
     vid_out_fn = vid_path+"/"+vid_name
 
 
